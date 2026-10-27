@@ -1,0 +1,70 @@
+JUEGO DE SEGUIMIENTO OCULAR
+===========================
+
+Archivos
+--------
+  juego-seguimiento-ocular.html   El juego (todo en un archivo).
+  abrir-juego.bat                 Doble clic para jugar en Windows.
+  servidor-local.ps1              Servidor local que usa el .bat (no hace falta tocarlo).
+
+  El archivo original "vor-trainer depuracion.html" NO se modificó.
+
+
+Cómo abrir
+----------
+  1. Doble clic en "abrir-juego.bat".
+     Se abre el navegador en http://localhost:8788/juego-seguimiento-ocular.html
+     y queda una ventana minimizada con el servidor. No cerrarla mientras jugás.
+
+  2. La primera vez hay que tener internet: se bajan el modelo de MediaPipe (~3,7 MB)
+     y la librería desde el CDN. Después queda en caché.
+
+  ¿Por qué no abrirlo con doble clic al .html?
+  Porque la cámara solo funciona en "contexto seguro": http://localhost o HTTPS.
+  Si el navegador te la bloquea con file://, usá el .bat.
+
+
+Cómo se juega
+-------------
+  1. "Iniciar"  → pide permiso de cámara y carga el modelo (3-4 s).
+  2. "Calibrar" → aparecen 9 puntos; mirá cada uno sin mover la cabeza.
+                  Al final muestra la calidad (error): si dice "floja", repetila.
+  3. Cuenta regresiva 3-2-1 y empieza la ronda.
+
+  El punto recorre la pantalla. Alrededor tiene el área de acierto.
+  Si la mirada sale del área, suenan pitidos de alarma (660/880 Hz); cuanto más
+  lejos está la mirada, más seguido suenan.
+  Si se pierde la cara, la alarma se pausa para no dar falsos avisos.
+
+
+Controles
+---------
+  Recorrido:  Horizontal, Vertical, Cruz (4 direcciones), Estrella (8),
+              Círculo, Ocho, Saltos aleatorios y Mixto (cambia cada 8 s).
+  Velocidad:  fracción del tamaño de pantalla por segundo (el HUD muestra px/s).
+  Área de acierto: 20-160 px de radio. Es el "tamaño del acierto".
+  Duración:   30 / 60 / 120 s o sin límite.
+  Dificultad automática: sube la velocidad cada 10 s.
+  Tono guía:  un tono suave que se vuelve más agudo al acercarse al punto.
+  Pausa:      botón "Pausa" o barra espaciadora. Esc detiene.
+
+  El "Modo prueba con puntero" permite probar la mecánica sin cámara (mouse o dedo),
+  por ejemplo para mostrar el juego en una presentación. No mide mirada.
+
+
+Qué mide y qué exporta
+----------------------
+  Al terminar la ronda muestra:
+    - puntaje, % de tiempo dentro del área, mejor racha,
+    - % de acierto POR DIRECCIÓN del estímulo (8 sectores).
+  "Descargar CSV" guarda una fila cada 100 ms con: tiempo, fase, recorrido,
+  dirección, posición del objetivo y de la mirada, distancia, área, dentro/fuera,
+  rostro detectado, calibración, puntaje, velocidad y pose de cabeza (yaw/pitch).
+
+
+Límites
+-------
+  - La estimación de mirada con webcam es aproximada (no es un eye-tracker clínico).
+    Sirve para entrenamiento, demostración y para comparar direcciones entre sí.
+  - Conviene luz de frente, sin contraluz, y el iris despejado.
+  - Todo el procesamiento es local: el video no sale del navegador.

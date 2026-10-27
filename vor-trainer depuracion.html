@@ -1,0 +1,978 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<title>Entrenador VOR — fijación, persecución y velocidad cefálica</title>
+<style>
+  :root{
+    --bg:#0b1220; --bg-2:#111b2e; --ink:#e9edf4; --ink-dim:#93a1b8; --line:#233047;
+    --accent:#3fb6a8; --warn:#e0a53f; --bad:#d4655a; --good:#3fb6a8;
+    font-size:16px;
+  }
+  *{box-sizing:border-box;}
+  html,body{ margin:0; padding:0; height:100%; background:var(--bg); color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; -webkit-tap-highlight-color:transparent; }
+  #app{ display:flex; flex-direction:column; height:100%;
+    padding-top:env(safe-area-inset-top,0px); padding-bottom:env(safe-area-inset-bottom,0px); }
+
+  header{ padding:14px 16px 10px; border-bottom:1px solid var(--line); background:var(--bg-2); }
+  header h1{ font-size:15px; font-weight:600; letter-spacing:.2px; margin:0 0 2px; }
+  header p{ margin:0; font-size:12.5px; color:var(--ink-dim); line-height:1.5; max-width:680px; }
+
+  #controls{ display:flex; flex-wrap:wrap; gap:10px 16px; padding:12px 16px; background:var(--bg-2);
+    border-bottom:1px solid var(--line); font-size:13px; }
+  #controls .field{ display:flex; flex-direction:column; gap:4px; min-width:150px; flex:1 1 150px; }
+  #controls label{ color:var(--ink-dim); font-size:11.5px; }
+  #controls textarea{ width:100%; min-height:44px; resize:vertical; background:var(--bg); color:var(--ink);
+    border:1px solid var(--line); border-radius:6px; padding:6px 8px; font-size:13px; font-family:inherit; }
+  #controls select, #controls input[type=range]{ width:100%; }
+  #controls select{ background:var(--bg); color:var(--ink); border:1px solid var(--line); border-radius:6px; padding:6px 8px; font-size:13px; }
+  .checkrow{ display:flex; align-items:center; gap:6px; font-size:12.5px; color:var(--ink-dim); }
+  .btnrow{ display:flex; gap:8px; align-items:flex-end; flex-wrap:wrap; }
+  button{ background:var(--accent); color:#04211d; border:none; border-radius:7px; padding:10px 16px;
+    font-size:13.5px; font-weight:600; cursor:pointer; }
+  button.secondary{ background:transparent; color:var(--ink); border:1px solid var(--line); }
+  button:disabled{ opacity:.4; cursor:default; }
+  #letterFields, #pursuitFields{ display:none; gap:10px 16px; flex-wrap:wrap; flex:1 1 100%; }
+  #letterFields.active, #pursuitFields.active{ display:flex; }
+
+  main{ flex:1; position:relative; overflow:hidden; background:radial-gradient(circle at 50% 45%, #101c30 0%, #0b1220 70%); }
+  #stageCanvas{ position:absolute; inset:0; width:100%; height:100%; display:block; touch-action:none; }
+
+  video#cam{ position:absolute; bottom:10px; right:10px; width:120px; height:90px; border-radius:8px;
+    border:1px solid var(--line); object-fit:cover; transform:scaleX(-1); opacity:.85; background:#000; }
+  canvas#camOverlay{ position:absolute; bottom:10px; right:10px; width:120px; height:90px; border-radius:8px;
+    pointer-events:none; transform:scaleX(-1); }
+
+  #hud{ position:absolute; top:10px; left:10px; right:150px; display:flex; flex-wrap:wrap; gap:6px 14px;
+    font-size:11.5px; color:var(--ink-dim); font-variant-numeric:tabular-nums; }
+  #hud .chip{ background:rgba(17,27,46,.85); border:1px solid var(--line); border-radius:6px; padding:4px 9px; white-space:nowrap; }
+  #hud .chip b{ color:var(--ink); }
+  #hud .chip.state-ok b{ color:var(--good); }
+  #hud .chip.state-bad b{ color:var(--bad); }
+  #hud .chip.state-warn b{ color:var(--warn); }
+
+  #overlayMsg{ position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+    text-align:center; padding:24px; background:rgba(11,18,32,.95); z-index:5; }
+  #overlayMsg .box{ max-width:520px; }
+  #overlayMsg h2{ font-size:18px; margin:0 0 10px; }
+  #overlayMsg p{ font-size:13.5px; color:var(--ink-dim); line-height:1.6; margin:0 0 16px; }
+  #overlayMsg ul{ text-align:left; font-size:13px; color:var(--ink-dim); line-height:1.7; padding-left:18px; }
+
+  #calibLabel{ position:absolute; top:16px; left:50%; transform:translateX(-50%); font-size:13px; color:var(--ink-dim);
+    background:rgba(17,27,46,.85); border:1px solid var(--line); padding:6px 14px; border-radius:20px; }
+
+  footer{ padding:8px 16px; border-top:1px solid var(--line); background:var(--bg-2); font-size:11px; color:var(--ink-dim);
+    display:flex; justify-content:space-between; gap:8px; flex-wrap:wrap; }
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <h1>Entrenador de fijación, persecución ocular y velocidad cefálica (VOR)</h1>
+    <p>Sujeta o fija el teléfono frente a tu cara, moviéndolo junto con la cabeza (cámara frontal hacia los ojos). El giroscopio mide la velocidad de la cabeza; la cámara mide hacia dónde miran tus ojos. El tono de audio sube con la velocidad; una alarma distinta avisa cuando tu mirada se sale del área objetivo.</p>
+  </header>
+
+  <div id="controls">
+    <div class="field" style="max-width:220px;">
+      <label for="modeSelect">Modo de juego</label>
+      <select id="modeSelect">
+        <option value="letters" selected>1. Fijación con letras/poema (VORx1)</option>
+        <option value="pursuit">2. Persecución ocular / habituación</option>
+      </select>
+    </div>
+
+    <div id="letterFields" class="active">
+      <div class="field" style="flex:2 1 260px;">
+        <label for="poemInput">Texto / poema a mostrar</label>
+        <textarea id="poemInput">Verde que te quiero verde.
+Verde viento. Verdes ramas.</textarea>
+      </div>
+      <div class="field" style="max-width:150px;">
+        <label for="unitSelect">Unidad de avance</label>
+        <select id="unitSelect">
+          <option value="letter" selected>Letra por letra</option>
+          <option value="word">Palabra por palabra</option>
+        </select>
+      </div>
+    </div>
+
+    <div id="pursuitFields">
+      <div class="field" style="max-width:180px;">
+        <label for="shapeSelect">Forma del camino (nivel 1)</label>
+        <select id="shapeSelect">
+          <option value="horizontal">Horizontal</option>
+          <option value="vertical">Vertical</option>
+          <option value="circle">Círculo</option>
+          <option value="figure8">Ocho</option>
+          <option value="lissajous">Lissajous (compleja)</option>
+        </select>
+      </div>
+      <div class="field" style="max-width:160px;">
+        <label for="toleranceSlider">Tolerancia: <span id="toleranceVal">70</span> px</label>
+        <input type="range" id="toleranceSlider" min="25" max="140" value="70" step="5">
+      </div>
+    </div>
+
+    <div class="field" style="max-width:200px;">
+      <label for="speedSlider">Velocidad objetivo: <span id="speedVal">40</span>°/s</label>
+      <input type="range" id="speedSlider" min="10" max="220" value="40" step="5">
+      <div class="checkrow"><input type="checkbox" id="autoRamp" checked><label for="autoRamp" style="margin:0;">Aumento automático de dificultad</label></div>
+    </div>
+    <div class="field" style="max-width:170px;">
+      <label for="dwellSlider">Fijación requerida: <span id="dwellVal">350</span> ms</label>
+      <input type="range" id="dwellSlider" min="100" max="1000" value="350" step="50">
+      <div class="checkrow"><input type="checkbox" id="soundOn" checked><label for="soundOn" style="margin:0;">Sonido</label></div>
+      <div class="checkrow"><input type="checkbox" id="debugOn" checked><label for="debugOn" style="margin:0;">Registrar en consola</label></div>
+    </div>
+    <div class="btnrow">
+      <button id="startBtn">Iniciar</button>
+      <button id="calBtn" class="secondary" disabled>Calibrar mirada (9 puntos)</button>
+      <button id="stopBtn" class="secondary" disabled>Detener</button>
+      <button id="dlLogBtn" class="secondary">Descargar log (CSV)</button>
+    </div>
+  </div>
+
+  <main>
+    <canvas id="stageCanvas"></canvas>
+    <div id="hud"></div>
+    <div id="calibLabel" style="display:none;"></div>
+    <video id="cam" playsinline muted autoplay></video>
+    <canvas id="camOverlay"></canvas>
+    <div id="overlayMsg">
+      <div class="box">
+        <h2>Antes de empezar</h2>
+        <ul>
+          <li>Pide permiso de cámara y, en iOS, de sensores de movimiento (aparecerá al tocar «Iniciar»).</li>
+          <li>Fija el teléfono frente a tu cara y muévelo <b>junto con la cabeza</b>: el giroscopio hace de proxy de la velocidad cefálica; la cámara frontal mide el ojo.</li>
+          <li>Tras iniciar, pulsa «Calibrar mirada» y sigue los 9 puntos que aparecerán. Mantén la cabeza razonablemente quieta mientras miras cada uno, con buena luz de frente (evita contraluz) y sin que el pelo o lentes tapen el iris.</li>
+          <li>Esta es una herramienta de entrenamiento/demostración; la estimación de mirada es aproximada, no una medición clínica calibrada en grados absolutos. Si el punto se ve desalineado, vuelve a calibrar.</li>
+          <li>Se carga MediaPipe (cámara/IA) y puede tardar unos segundos la primera vez; necesita conexión a internet.</li>
+        </ul>
+        <button id="okBtn">Entendido</button>
+      </div>
+    </div>
+  </main>
+
+  <footer>
+    <span id="statusLine">Esperando inicio…</span>
+    <span id="scoreLine">Nivel <b id="levelOut">1</b> · Progreso <b id="progressOut">0/0</b> · Aciertos seguidos <b id="streakOut">0</b></span>
+  </footer>
+</div>
+
+<div id="errBanner" style="display:none;position:fixed;left:0;right:0;bottom:0;z-index:9999;background:#3a1418;color:#ffd9d5;font-size:12px;padding:10px 14px;border-top:2px solid #d4655a;white-space:pre-wrap;"></div>
+<script type="module">
+/* Muestra cualquier error real en pantalla: en el móvil no hay consola de desarrollador visible,
+   así que sin esto un fallo se ve como "no funciona nada" sin ninguna pista. */
+const errBanner = document.getElementById('errBanner');
+function showError(msg){
+  errBanner.style.display = 'block';
+  errBanner.textContent = '⚠ ' + msg;
+  console.error(msg);
+}
+window.addEventListener('error', (e)=>{ console.error('[VOR] error no capturado:', e.error||e); showError('Error de script: ' + (e.message||e)); });
+window.addEventListener('unhandledrejection', (e)=>{ console.error('[VOR] promesa rechazada:', e.reason); showError('Error async: ' + (e.reason && e.reason.message ? e.reason.message : e.reason)); });
+if (!window.isSecureContext){
+  showError('Esta página no está en un contexto seguro (HTTPS o localhost). La cámara y los sensores de movimiento NO funcionarán si la abres con doble clic (file://) o por HTTP simple. Súbela a GitHub Pages, Netlify, Vercel, o sírvela con "python -m http.server" detrás de HTTPS/ngrok.');
+}
+
+/* CDN: se importa dinámicamente (no como <script type=module> import estático) para que, si el CDN
+   falla, el resto de la interfaz (botones, sliders) siga funcionando y puedas ver el error en pantalla.
+   Importante: se importa la RAÍZ del paquete (sin /vision_bundle.mjs), porque ese archivo expone un
+   export por defecto y romperá el "import {FaceLandmarker,...}" con nombres. */
+const TASKS_VISION_VERSION = "0.10.14";
+const TASKS_VISION_CDN = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${TASKS_VISION_VERSION}`;
+let FaceLandmarker, FilesetResolver;
+
+/* ---------- DOM ---------- */
+const stage = document.getElementById('stageCanvas');
+const sctx = stage.getContext('2d');
+const cam = document.getElementById('cam');
+const camOverlay = document.getElementById('camOverlay');
+const octx = camOverlay.getContext('2d');
+const hud = document.getElementById('hud');
+const calibLabel = document.getElementById('calibLabel');
+const startBtn = document.getElementById('startBtn');
+const calBtn = document.getElementById('calBtn');
+const stopBtn = document.getElementById('stopBtn');
+const okBtn = document.getElementById('okBtn');
+const overlayMsg = document.getElementById('overlayMsg');
+const modeSelect = document.getElementById('modeSelect');
+const letterFields = document.getElementById('letterFields');
+const pursuitFields = document.getElementById('pursuitFields');
+const poemInput = document.getElementById('poemInput');
+const unitSelect = document.getElementById('unitSelect');
+const shapeSelect = document.getElementById('shapeSelect');
+const toleranceSlider = document.getElementById('toleranceSlider');
+const toleranceVal = document.getElementById('toleranceVal');
+const speedSlider = document.getElementById('speedSlider');
+const speedVal = document.getElementById('speedVal');
+const autoRamp = document.getElementById('autoRamp');
+const dwellSlider = document.getElementById('dwellSlider');
+const dwellVal = document.getElementById('dwellVal');
+const soundOn = document.getElementById('soundOn');
+const statusLine = document.getElementById('statusLine');
+const levelOut = document.getElementById('levelOut');
+const progressOut = document.getElementById('progressOut');
+const streakOut = document.getElementById('streakOut');
+const debugOn = document.getElementById('debugOn');
+const dlLogBtn = document.getElementById('dlLogBtn');
+
+/* ---------- Depuración (consola) ----------
+   dbg(tag, ...datos)          -> registra siempre (si "Registrar en consola" está marcado)
+   dbgEvery(tag, ms, fn)       -> registra como máximo cada `ms` (fn se evalúa solo si toca)
+   dbgOnChange(tag, valor, …)  -> registra solo cuando `valor` cambia respecto al último registro
+   Además, cada ~100 ms se guarda una fila en dbgFrames (exportable con el botón o vorDebug.csv()). */
+const dbgLast = {};
+const dbgFrames = [];
+function dbg(tag, ...data){
+  if(!debugOn.checked) return;
+  console.log(`%c[VOR ${(performance.now()/1000).toFixed(2)}s] ${tag}`, 'color:#3fb6a8;font-weight:bold', ...data);
+}
+function dbgEvery(tag, ms, fn){
+  if(!debugOn.checked) return;
+  const now = performance.now();
+  if(now-(dbgLast['t:'+tag]||0) < ms) return;
+  dbgLast['t:'+tag] = now;
+  dbg(tag, fn());
+}
+function dbgOnChange(tag, value, ...extra){
+  if(!debugOn.checked) return;
+  if(dbgLast['c:'+tag] === value) return;
+  dbgLast['c:'+tag] = value;
+  dbg(tag, value, ...extra);
+}
+const dbgNum = (v,d=2)=> (typeof v==='number' && isFinite(v)) ? +v.toFixed(d) : null;
+function dbgGazeDist(){
+  const t = state.mode==='pursuit' ? state.pursuit.targetPx : {x:stage.width/2, y:stage.height/2};
+  if(!t) return null;
+  return { distPx: dbgNum(Math.hypot(state.gazeScreen.x-t.x, state.gazeScreen.y-t.y),0),
+           tolPx: dbgNum(state.toleranceBasePx*devicePixelRatio,0) };
+}
+let dbgRafCount=0, dbgT0=performance.now(), dbgRafFps=0, dbgDetFps=0, dbgLastRow=0;
+function debugTick(now){
+  dbgRafCount++;
+  if(now-dbgT0 >= 1000){ dbgRafFps=dbgRafCount; dbgDetFps=state.dbgDetCount||0; dbgRafCount=0; state.dbgDetCount=0; dbgT0=now; }
+  if(!debugOn.checked) return;
+  dbgOnChange('rostro', (now-state.lastFaceSeenTime)<=700 ? 'detectado' : 'PERDIDO');
+  dbgOnChange('fuente velocidad cabeza', state.headSource);
+  dbgOnChange('fijación', state.fixated ? 'dentro' : 'fuera', dbgGazeDist());
+  const g=state.gaze||{}, hp=state.headPose||{}, gs=state.gazeScreen, n=state.dbgNorm||{}, d=dbgGazeDist()||{};
+  const row = {
+    t: dbgNum(now/1000,3), modo: state.mode, calibrado: state.calib.done, nivel: state.level,
+    fpsPantalla: dbgRafFps, fpsDeteccion: dbgDetFps, msDeteccion: dbgNum(state.dbgDetectMs,1),
+    fuenteCabeza: state.headSource||'', velCabeza: dbgNum(state.headSpeed,1), velCabezaCam: dbgNum(state.visionHeadSpeed,1),
+    velOjo: dbgNum(state.eyeSpeed,1), velObjetivo: dbgNum(state.targetSpeed,0),
+    irisX: dbgNum(g.x,3), irisY: dbgNum(g.y,3),
+    rHx: dbgNum(g.right&&g.right.hx,3), rVy: dbgNum(g.right&&g.right.vy,3),
+    lHx: dbgNum(g.left&&g.left.hx,3),  lVy: dbgNum(g.left&&g.left.vy,3),
+    yaw: dbgNum(hp.yaw,1), pitch: dbgNum(hp.pitch,1),
+    normX: dbgNum(n.nx,3), normY: dbgNum(n.ny,3),
+    gazePxX: dbgNum(gs.x,0), gazePxY: dbgNum(gs.y,0),
+    distPx: d.distPx ?? null, tolPx: d.tolPx ?? null, fijado: !!state.fixated
+  };
+  if(now-dbgLastRow >= 100){ dbgLastRow=now; dbgFrames.push(row); if(dbgFrames.length>6000) dbgFrames.shift(); }
+  dbgEvery('frame', 500, ()=>row);
+}
+function dbgCsv(){
+  if(!dbgFrames.length) return '';
+  const keys = Object.keys(dbgFrames[0]);
+  return [keys.join(','), ...dbgFrames.map(r=>keys.map(k=>r[k]??'').join(','))].join('\n');
+}
+function dbgDownload(){
+  const blob = new Blob([dbgCsv()], {type:'text/csv'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob); a.download = `vor-log-${Date.now()}.csv`; a.click();
+  dbg('log descargado', {filas: dbgFrames.length});
+}
+dlLogBtn.addEventListener('click', dbgDownload);
+for(const el of [modeSelect,unitSelect,shapeSelect,toleranceSlider,speedSlider,dwellSlider,autoRamp,soundOn,debugOn])
+  el.addEventListener('change', ()=> console.log(`[VOR] control ${el.id} =`, el.type==='checkbox' ? el.checked : el.value));
+
+okBtn.onclick = () => overlayMsg.style.display = 'none';
+speedSlider.oninput = () => { speedVal.textContent = speedSlider.value; state.targetSpeed = +speedSlider.value; };
+dwellSlider.oninput = () => { dwellVal.textContent = dwellSlider.value; state.dwellMs = +dwellSlider.value; };
+toleranceSlider.oninput = () => { toleranceVal.textContent = toleranceSlider.value; state.toleranceBasePx = +toleranceSlider.value; };
+modeSelect.onchange = () => {
+  state.mode = modeSelect.value;
+  letterFields.classList.toggle('active', state.mode==='letters');
+  pursuitFields.classList.toggle('active', state.mode==='pursuit');
+  resetGameProgress();
+};
+shapeSelect.onchange = () => { state.pursuit.shapeOverrideLevel1 = shapeSelect.value; if(state.level===1) state.pursuit.shape = shapeSelect.value; };
+
+function resize(){
+  stage.width = stage.clientWidth * devicePixelRatio;
+  stage.height = stage.clientHeight * devicePixelRatio;
+  camOverlay.width = camOverlay.clientWidth; camOverlay.height = camOverlay.clientHeight;
+}
+window.addEventListener('resize', resize);
+
+/* ---------- Audio ---------- */
+let actx=null, osc=null, gainNode=null, buzz=null, buzzGain=null;
+function initAudio(){
+  actx = new (window.AudioContext||window.webkitAudioContext)();
+  osc = actx.createOscillator(); osc.type='sine'; osc.frequency.value=220;
+  gainNode = actx.createGain(); gainNode.gain.value=0;
+  osc.connect(gainNode).connect(actx.destination); osc.start();
+
+  buzz = actx.createOscillator(); buzz.type='square'; buzz.frequency.value=140;
+  buzzGain = actx.createGain(); buzzGain.gain.value=0;
+  buzz.connect(buzzGain).connect(actx.destination); buzz.start();
+}
+function setSpeedTone(speedDegS, inBand, moving){
+  if(!osc) return;
+  if(!soundOn.checked){ gainNode.gain.value=0; return; }
+  const freq = Math.min(1400, 220 + speedDegS*4.2);
+  osc.frequency.setTargetAtTime(freq, actx.currentTime, 0.03);
+  const vol = moving ? (inBand?0.08:0.045) : 0.0;
+  gainNode.gain.setTargetAtTime(vol, actx.currentTime, 0.05);
+  osc.type = inBand ? 'sine' : 'triangle';
+}
+let lastOutsideAlert = 0;
+function setExitAlarm(outside){
+  if(!buzz) return;
+  if(!soundOn.checked){ buzzGain.gain.value=0; return; }
+  const now = actx.currentTime;
+  if(outside){
+    // pulsing buzzer: alterna volumen para que suene como alarma, no un tono fijo molesto
+    const pulse = (Math.sin(now*14)+1)/2;
+    buzzGain.gain.setTargetAtTime(0.05 + pulse*0.09, now, 0.01);
+  } else {
+    buzzGain.gain.setTargetAtTime(0, now, 0.08);
+  }
+}
+function playChime(success){
+  if(!actx || !soundOn.checked) return;
+  const o=actx.createOscillator(), g=actx.createGain();
+  o.type='sine'; o.frequency.value = success? 880:160;
+  g.gain.value=0.0001; o.connect(g).connect(actx.destination);
+  const t=actx.currentTime;
+  g.gain.exponentialRampToValueAtTime(0.18, t+0.01);
+  g.gain.exponentialRampToValueAtTime(0.0001, t+ (success?0.28:0.22));
+  o.start(t); o.stop(t+0.3);
+  if(success){ o.frequency.setValueAtTime(880,t); o.frequency.setValueAtTime(1180,t+0.1); }
+}
+
+/* ---------- State ---------- */
+const state = {
+  mode:'letters',
+  running:false,
+  faceLandmarker:null,
+  lastVideoTime:-1,
+  headSpeed:0, headVec:{x:0,y:0,z:0},
+  eyeSpeed:0, gaze:{x:0,y:0},
+  calib:{ done:false, coefX:null, coefY:null },
+  headPose:{yaw:0,pitch:0},
+  lastFaceSeenTime:0,
+  gazeScreen:{x:0,y:0}, // canvas px
+  fixated:false, fixSince:0,
+  targetSpeed:+speedSlider.value, dwellMs:+dwellSlider.value, toleranceBasePx:+toleranceSlider.value,
+  tokens:[], tokenIdx:0,
+  level:1, streak:0, direction:'H',
+  pursuit:{ shape:shapeSelect.value, shapeOverrideLevel1:shapeSelect.value, t:0, cycleMs:6000,
+            insideFrames:0, totalFrames:0, lastCycleId:0 },
+};
+const SHAPE_ORDER = ['horizontal','vertical','circle','figure8','lissajous'];
+
+function tokenize(){
+  const raw = poemInput.value.replace(/\r/g,'');
+  state.tokens = unitSelect.value==='letter' ? raw.split('').filter(c=>c!=='\n') : raw.split(/\s+/).filter(Boolean);
+  state.tokenIdx = 0;
+  progressOut.textContent = `0/${state.tokens.length}`;
+}
+poemInput.addEventListener('change', ()=>{ if(!state.running) tokenize(); });
+unitSelect.addEventListener('change', ()=>{ if(!state.running) tokenize(); });
+
+function resetGameProgress(){
+  state.level=1; state.streak=0; state.tokenIdx=0;
+  state.pursuit.shape = state.level<=SHAPE_ORDER.length ? SHAPE_ORDER[state.level-1] : 'lissajous';
+  state.pursuit.t=0; state.pursuit.insideFrames=0; state.pursuit.totalFrames=0;
+  levelOut.textContent = state.level; streakOut.textContent = state.streak;
+}
+
+/* ---------- Device motion (IMU) ---------- */
+const HS_SMOOTH = 0.25;
+let lastMotionEventTime = 0;
+function onMotion(e){
+  const r = e.rotationRate;
+  if(!r || (r.alpha===null && r.beta===null && r.gamma===null)){ dbgOnChange('giroscopio','evento SIN rotationRate (sensor no disponible)'); return; }
+  lastMotionEventTime = performance.now();
+  const a=r.alpha||0, b=r.beta||0, g=r.gamma||0; // alpha=yaw(brújula), beta=cabeceo adelante/atrás, gamma=inclinación izq/der
+  state.headVec = {x:g, y:b, z:a}; // x: izquierda/derecha (gamma), y: arriba/abajo (beta)
+  const mag = Math.sqrt(a*a+b*b+g*g);
+  state.headSpeed = state.headSpeed*(1-HS_SMOOTH) + mag*HS_SMOOTH;
+  state.headSource = 'giroscopio';
+  dbgOnChange('giroscopio', 'recibiendo eventos', {intervaloMs:e.interval});
+  dbgEvery('gyro', 500, ()=>({alpha:dbgNum(a,1), beta:dbgNum(b,1), gamma:dbgNum(g,1), magnitud:dbgNum(mag,1), velSuavizada:dbgNum(state.headSpeed,1)}));
+}
+async function requestMotionPermission(){
+  try{
+    dbg('permiso movimiento', {DeviceMotionEvent: typeof DeviceMotionEvent!=='undefined', requierePermiso: typeof DeviceMotionEvent!=='undefined' && typeof DeviceMotionEvent.requestPermission==='function'});
+    if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function'){
+      const res = await DeviceMotionEvent.requestPermission();
+      dbg('permiso movimiento', 'respuesta:', res);
+      if(res !== 'granted') throw new Error('Permiso de sensores de movimiento denegado.');
+    }
+    window.addEventListener('devicemotion', onMotion);
+    dbg('devicemotion', 'listener registrado (si no llegan eventos, no hay giroscopio)');
+  }catch(err){
+    console.warn('[VOR] sensores de movimiento no disponibles:', err);
+    // No hay giroscopio (típico en computador) o el permiso fue denegado: seguimos igual,
+    // el bucle principal usará automáticamente la estimación de cabeza por cámara.
+    showError('Sensores de movimiento no disponibles ('+err.message+'). Usando estimación de velocidad de cabeza por cámara — funciona en computador, pero es menos precisa que el giroscopio del teléfono.');
+  }
+}
+
+/* Pose de cabeza: usamos la matriz de transformación facial 3D que entrega MediaPipe (mucho más estable
+   que un proxy 2D), y solo si no está disponible caemos a estimar yaw/pitch por la posición de la nariz. */
+let lastHeadPose=null, lastHeadPoseT=0;
+function poseFromMatrix(matrixObj){
+  const m = matrixObj.data; // 4x4, row-major
+  const R02=m[2], R12=m[6], R22=m[10];
+  const yaw = Math.atan2(R02, R22) * 180/Math.PI;
+  const pitch = Math.atan2(-R12, Math.sqrt(R02*R02+R22*R22)) * 180/Math.PI;
+  return { yaw, pitch };
+}
+function poseFromNoseProxy(lm){
+  const faceW = Math.hypot(lm[234].x-lm[454].x, lm[234].y-lm[454].y) || 0.3;
+  const faceH = Math.hypot(lm[10].x-lm[152].x, lm[10].y-lm[152].y) || 0.4;
+  const cx = (lm[234].x+lm[454].x)/2, cy=(lm[10].y+lm[152].y)/2;
+  return { yaw: ((lm[1].x-cx)/faceW)*90, pitch: ((lm[1].y-cy)/faceH)*90 };
+}
+function updateHeadPoseAndSpeed(results, tMs){
+  const lm = results.faceLandmarks[0];
+  const matrixList = results.facialTransformationMatrixes;
+  const pose = (matrixList && matrixList.length) ? poseFromMatrix(matrixList[0]) : poseFromNoseProxy(lm);
+  state.headPose = pose;
+  dbgOnChange('pose de cabeza', (matrixList && matrixList.length) ? 'matriz 3D de MediaPipe' : 'proxy por nariz (sin matriz)');
+  if(lastHeadPose){
+    const dt = (tMs-lastHeadPoseT)/1000;
+    if(dt>0){
+      const dYaw = pose.yaw-lastHeadPose.yaw, dPitch = pose.pitch-lastHeadPose.pitch;
+      const inst = Math.hypot(dYaw,dPitch)/dt;
+      state.visionHeadSpeed = (state.visionHeadSpeed||0)*0.7 + inst*0.3;
+      state.visionHeadVec = {x:dYaw/dt, y:dPitch/dt};
+    }
+  }
+  lastHeadPose = pose; lastHeadPoseT = tMs;
+}
+
+/* ---------- Face landmarker ---------- */
+async function initFaceLandmarker(){
+  const tInit = performance.now();
+  dbg('MediaPipe', 'cargando desde', TASKS_VISION_CDN);
+  if(!FaceLandmarker || !FilesetResolver){
+    const mod = await import(TASKS_VISION_CDN); // import de la RAÍZ del paquete, no de un archivo suelto
+    FaceLandmarker = mod.FaceLandmarker;
+    FilesetResolver = mod.FilesetResolver;
+    dbg('MediaPipe', 'módulo importado', {ms: dbgNum(performance.now()-tInit,0), tieneFaceLandmarker: !!mod.FaceLandmarker, tieneFilesetResolver: !!mod.FilesetResolver});
+    if(!FaceLandmarker || !FilesetResolver) throw new Error('El CDN de MediaPipe respondió pero no expuso FaceLandmarker/FilesetResolver.');
+  }
+  const fileset = await FilesetResolver.forVisionTasks(`${TASKS_VISION_CDN}/wasm`); // sin nombre de archivo al final
+  try{
+    state.faceLandmarker = await FaceLandmarker.createFromOptions(fileset, {
+      baseOptions:{
+        modelAssetPath:"https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task",
+        delegate:"GPU"
+      },
+      outputFaceBlendshapes:false, outputFacialTransformationMatrixes:true,
+      runningMode:"VIDEO", numFaces:1
+    });
+    dbg('MediaPipe', 'FaceLandmarker listo', {delegate:'GPU', msTotal: dbgNum(performance.now()-tInit,0)});
+  }catch(err){
+    console.warn('[VOR] delegate GPU falló, reintentando con CPU:', err);
+    // Algunos navegadores/GPUs fallan con delegate GPU; reintentar con CPU.
+    state.faceLandmarker = await FaceLandmarker.createFromOptions(fileset, {
+      baseOptions:{
+        modelAssetPath:"https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task",
+        delegate:"CPU"
+      },
+      outputFaceBlendshapes:false, outputFacialTransformationMatrixes:true,
+      runningMode:"VIDEO", numFaces:1
+    });
+    dbg('MediaPipe', 'FaceLandmarker listo', {delegate:'CPU', msTotal: dbgNum(performance.now()-tInit,0)});
+  }
+}
+async function initCamera(){
+  const stream = await navigator.mediaDevices.getUserMedia({ video:{ facingMode:"user", width:{ideal:640}, height:{ideal:480} }, audio:false });
+  cam.srcObject = stream;
+  await new Promise(res=>{ cam.onloadedmetadata = ()=>res(); });
+  await cam.play();
+  const track = stream.getVideoTracks()[0];
+  dbg('cámara', {label:track.label, ...track.getSettings(), videoAncho:cam.videoWidth, videoAlto:cam.videoHeight});
+}
+
+const IDX = { rOuter:33, rInner:133, rTop:159, rBot:145, rIris:468,
+              lOuter:263, lInner:362, lTop:386, lBot:374, lIris:473 };
+function gazeRatioFromLandmarks(lm){
+  function ratio(iris, outer, inner, top, bot){
+    const ex=(outer.x-inner.x), ey=(bot.y-top.y);
+    const hx = ex!==0 ? ((iris.x-inner.x)/ex)*2-1 : 0;
+    const vy = ey!==0 ? ((iris.y-top.y)/ey)*2-1 : 0;
+    return {hx,vy};
+  }
+  const r = ratio(lm[IDX.rIris], lm[IDX.rOuter], lm[IDX.rInner], lm[IDX.rTop], lm[IDX.rBot]);
+  const l = ratio(lm[IDX.lIris], lm[IDX.lInner], lm[IDX.lOuter], lm[IDX.lTop], lm[IDX.lBot]);
+  return { x:(r.hx+l.hx)/2, y:(r.vy+l.vy)/2, right:r, left:l };
+}
+
+/* ---------- Regresión de mirada (estilo calibración de eye-trackers basados en webcam) ----------
+   En vez de una simple regla lineal centro->extremos, ajustamos por mínimos cuadrados un modelo que
+   toma como entradas la posición del iris en CADA ojo por separado más la pose de la cabeza (yaw/pitch),
+   y predice la posición normalizada en pantalla. Esto compensa buena parte del error que introduce
+   mover la cabeza mientras miras, que es la causa más común de que el punto "no tome bien los ojos". */
+function buildFeature(right, left, headPose){
+  return [1, right.hx, right.vy, left.hx, left.vy, (headPose.yaw||0)/45, (headPose.pitch||0)/45];
+}
+function solveLinear(A, b){
+  const n = A.length;
+  const M = A.map((row,i)=>[...row, b[i]]);
+  for(let col=0; col<n; col++){
+    let pivotRow = col;
+    for(let r=col+1;r<n;r++) if(Math.abs(M[r][col])>Math.abs(M[pivotRow][col])) pivotRow=r;
+    [M[col],M[pivotRow]]=[M[pivotRow],M[col]];
+    const pivot = M[col][col] || 1e-9;
+    for(let c=col;c<=n;c++) M[col][c]/=pivot;
+    for(let r=0;r<n;r++){
+      if(r===col) continue;
+      const factor = M[r][col];
+      for(let c=col;c<=n;c++) M[r][c]-=factor*M[col][c];
+    }
+  }
+  return M.map(row=>row[n]);
+}
+function fitRegression(features, targets){
+  const n = features[0].length;
+  const AtA = Array.from({length:n},()=>new Array(n).fill(0));
+  const Atb = new Array(n).fill(0);
+  for(let i=0;i<features.length;i++){
+    const f = features[i];
+    for(let r=0;r<n;r++){
+      Atb[r]+= f[r]*targets[i];
+      for(let c=0;c<n;c++) AtA[r][c]+= f[r]*f[c];
+    }
+  }
+  const lambda=1e-3; // ridge, evita matriz singular con pocos puntos
+  for(let i=0;i<n;i++) AtA[i][i]+=lambda;
+  return solveLinear(AtA, Atb);
+}
+
+/* Filtro "One Euro": suaviza el punto de mirada quitando temblor sin meter retraso perceptible
+   cuando el ojo se mueve rápido (a diferencia de un promedio simple, que sería impreciso en sacadas
+   rápidas o demasiado tembloroso en fijaciones). */
+class OneEuroFilter{
+  constructor(minCutoff=1.1, beta=0.06, dCutoff=1.0){
+    this.minCutoff=minCutoff; this.beta=beta; this.dCutoff=dCutoff;
+    this.xPrev=null; this.dxPrev=0; this.tPrev=null;
+  }
+  static alpha(cutoff, dt){ const tau=1/(2*Math.PI*cutoff); return 1/(1+tau/dt); }
+  filter(x, tMs){
+    if(this.tPrev===null){ this.tPrev=tMs; this.xPrev=x; return x; }
+    const dt = Math.max((tMs-this.tPrev)/1000, 1e-3);
+    const dx = (x-this.xPrev)/dt;
+    const aD = OneEuroFilter.alpha(this.dCutoff, dt);
+    const dxHat = aD*dx + (1-aD)*this.dxPrev;
+    const cutoff = this.minCutoff + this.beta*Math.abs(dxHat);
+    const a = OneEuroFilter.alpha(cutoff, dt);
+    const xHat = a*x + (1-a)*this.xPrev;
+    this.xPrev=xHat; this.dxPrev=dxHat; this.tPrev=tMs;
+    return xHat;
+  }
+  reset(){ this.xPrev=null; this.dxPrev=0; this.tPrev=null; }
+}
+const oneEuroX = new OneEuroFilter();
+const oneEuroY = new OneEuroFilter();
+
+let lastGaze=null, lastGazeT=0;
+function updateEyeFromResults(results, tMs){
+  if(!results.faceLandmarks || !results.faceLandmarks.length) return;
+  const lm = results.faceLandmarks[0];
+  const g = gazeRatioFromLandmarks(lm);
+  state.gaze = g;
+  if(lastGaze){
+    const dt = (tMs-lastGazeT)/1000;
+    if(dt>0){
+      const dAngle = Math.hypot((g.x-lastGaze.x)*25, (g.y-lastGaze.y)*25);
+      state.eyeSpeed = state.eyeSpeed*0.6 + (dAngle/dt)*0.4;
+    }
+  }
+  lastGaze=g; lastGazeT=tMs;
+
+  if(state.calib.done && state.calib.coefX){
+    const f = buildFeature(g.right, g.left, state.headPose||{yaw:0,pitch:0});
+    let nx=0, ny=0;
+    for(let i=0;i<f.length;i++){ nx += f[i]*state.calib.coefX[i]; ny += f[i]*state.calib.coefY[i]; }
+    nx = clamp(nx,-1.5,1.5); ny = clamp(ny,-1.5,1.5);
+    const nxRaw=nx, nyRaw=ny;
+    nx = oneEuroX.filter(nx, tMs); ny = oneEuroY.filter(ny, tMs);
+    state.dbgNorm = {nx, ny, nxRaw, nyRaw};
+    const w=stage.width, h=stage.height;
+    state.gazeScreen = { x: w/2 + nx*(w*0.42), y: h/2 + ny*(h*0.38) };
+  }
+
+  octx.clearRect(0,0,camOverlay.width,camOverlay.height);
+  octx.fillStyle = state.calib.done ? (state.fixated?'#3fb6a8':'#d4655a') : '#e0a53f';
+  for(const idx of [IDX.rIris, IDX.lIris]){
+    const p = lm[idx];
+    octx.beginPath(); octx.arc(p.x*camOverlay.width, p.y*camOverlay.height, 3, 0, 7); octx.fill();
+  }
+}
+function clamp(v,a,b){ return Math.max(a,Math.min(b,v)); }
+
+/* ---------- Calibración de 9 puntos (grilla 3x3) ---------- */
+const CAL_POINTS = [];
+for(const ny of [-1,0,1]) for(const nx of [-1,0,1]) CAL_POINTS.push({nx,ny});
+// centro primero para que el punto de referencia sea el más estable
+CAL_POINTS.sort((a,b)=> (Math.abs(a.nx)+Math.abs(a.ny)) - (Math.abs(b.nx)+Math.abs(b.ny)));
+
+let calibrating=false;
+async function runCalibration(){
+  if(calibrating) return;
+  calibrating = true;
+  calBtn.disabled = true;
+  calibLabel.style.display='block';
+  oneEuroX.reset(); oneEuroY.reset();
+  dbg('calibración', 'INICIO', {puntos:CAL_POINTS.length, rostro:(performance.now()-state.lastFaceSeenTime)<=700});
+  const features = [], targetsX = [], targetsY = [];
+  for(const pt of CAL_POINTS){
+    calibLabel.textContent = `Mira fijo el punto (${CAL_POINTS.indexOf(pt)+1}/${CAL_POINTS.length})…`;
+    state.calibTargetNX = pt.nx; state.calibTargetNY = pt.ny;
+    await sleep(600); // tiempo de asentamiento, evita capturar el movimiento sacádico hacia el punto
+    const feat = await captureAverageFeature(450);
+    if(feat){ features.push(feat); targetsX.push(pt.nx); targetsY.push(pt.ny); }
+    dbg('calibración punto', `${CAL_POINTS.indexOf(pt)+1}/${CAL_POINTS.length}`, {objetivo:{nx:pt.nx, ny:pt.ny}, capturado:!!feat, features: feat ? feat.map(v=>dbgNum(v,3)) : null});
+  }
+  if(features.length < 6){
+    dbg('calibración', 'FALLÓ: puntos válidos', features.length, 'de', CAL_POINTS.length, '(mínimo 6)');
+    calibLabel.style.display='none'; calibrating=false; calBtn.disabled=false;
+    showError('No se detectó la cara/ojos con suficiente estabilidad durante la calibración. Mejora la luz, acerca un poco el teléfono y vuelve a intentar.');
+    return;
+  }
+  state.calib.coefX = fitRegression(features, targetsX);
+  state.calib.coefY = fitRegression(features, targetsY);
+  if(debugOn.checked){
+    const names = ['bias','rHx','rVy','lHx','lVy','yaw/45','pitch/45'];
+    const coefs = names.map((nm,i)=>({variable:nm, coefX:dbgNum(state.calib.coefX[i],3), coefY:dbgNum(state.calib.coefY[i],3)}));
+    const resid = features.map((f,i)=>{
+      let px=0, py=0;
+      for(let k=0;k<f.length;k++){ px+=f[k]*state.calib.coefX[k]; py+=f[k]*state.calib.coefY[k]; }
+      return { objetivo:`(${targetsX[i]},${targetsY[i]})`, predicho:`(${px.toFixed(2)},${py.toFixed(2)})`, error:dbgNum(Math.hypot(px-targetsX[i], py-targetsY[i]),3) };
+    });
+    const rms = Math.sqrt(resid.reduce((a,r)=>a+r.error*r.error,0)/resid.length);
+    dbg('calibración', 'COMPLETA', {puntosUsados:features.length, errorRMS:dbgNum(rms,3), nota:'RMS en unidades normalizadas (1 = borde de pantalla); <0.25 aceptable'});
+    console.table(coefs);
+    console.table(resid);
+  }
+  state.calib.done = true;
+  calibLabel.style.display='none';
+  calibrating = false;
+  calBtn.disabled = false;
+  statusLine.textContent = 'Calibración lista. ¡A jugar!';
+}
+function sleep(ms){ return new Promise(r=>setTimeout(r,ms)); }
+function captureAverageFeature(ms){
+  return new Promise(resolve=>{
+    const samples = [];
+    const start = performance.now();
+    const iv = setInterval(()=>{
+      if(state.gaze && state.gaze.right && state.gaze.left){
+        samples.push(buildFeature(state.gaze.right, state.gaze.left, state.headPose||{yaw:0,pitch:0}));
+      }
+      if(performance.now()-start >= ms){
+        clearInterval(iv);
+        if(!samples.length){ dbg('calib captura', 'SIN muestras (iris/rostro no detectados)'); resolve(null); return; }
+        const n = samples[0].length;
+        const avg = new Array(n).fill(0);
+        for(const s of samples) for(let i=0;i<n;i++) avg[i]+=s[i]/samples.length;
+        if(debugOn.checked){
+          const std = avg.map((m,i)=>Math.sqrt(samples.reduce((a,s)=>a+(s[i]-m)**2,0)/samples.length));
+          dbg('calib captura', {muestras:samples.length, desvEstIris:std.slice(1,5).map(v=>dbgNum(v,3)), nota:'desv. alta (>0.1) = ojo/cabeza inestable'});
+        }
+        resolve(avg);
+      }
+    }, 40);
+  });
+}
+calBtn.addEventListener('click', runCalibration);
+
+/* ---------- Pursuit path ---------- */
+function pathPoint(shape, t){ // t in [0,1)
+  const a = 2*Math.PI*t;
+  switch(shape){
+    case 'horizontal': return { x:Math.sin(a), y:0 };
+    case 'vertical':   return { x:0, y:Math.sin(a) };
+    case 'circle':     return { x:Math.cos(a), y:Math.sin(a) };
+    case 'figure8':    return { x:Math.sin(a), y:Math.sin(2*a)/2 };
+    case 'lissajous':  return { x:Math.sin(3*a), y:Math.sin(4*a+ (state.level*0.4)) };
+    default: return {x:0,y:0};
+  }
+}
+function currentShapeForLevel(){
+  if(state.level===1) return state.pursuit.shapeOverrideLevel1;
+  const idx = Math.min(state.level-1, SHAPE_ORDER.length-1);
+  return SHAPE_ORDER[idx];
+}
+
+/* ---------- main loop ---------- */
+function detectLoop(){
+  if(!state.running) return;
+  const now = performance.now();
+  if(cam.readyState>=2 && cam.currentTime !== state.lastVideoTime){
+    state.lastVideoTime = cam.currentTime;
+    const tD = performance.now();
+    const results = state.faceLandmarker.detectForVideo(cam, now);
+    state.dbgDetectMs = performance.now()-tD; state.dbgDetCount = (state.dbgDetCount||0)+1;
+    updateEyeFromResults(results, now);
+    if(results.faceLandmarks && results.faceLandmarks.length){
+      updateHeadPoseAndSpeed(results, now);
+      state.lastFaceSeenTime = now;
+    }
+  }
+  // Si no llega un evento de giroscopio real hace más de 500ms (típico de un computador sin sensores,
+  // o de un móvil sin permiso concedido), usamos la velocidad de cabeza estimada por cámara.
+  if(now - lastMotionEventTime > 500){
+    state.headSpeed = state.visionHeadSpeed || 0;
+    state.headVec = state.visionHeadVec || {x:0,y:0};
+    state.headSource = 'cámara';
+  }
+  if(state.mode==='letters') updateLettersGame(now); else updatePursuitGame(now);
+  drawStage(now);
+  updateHud();
+  debugTick(now);
+  requestAnimationFrame(detectLoop);
+}
+
+function updateLettersGame(now){
+  const speedOk = state.headSpeed >= state.targetSpeed;
+  const inBand = speedOk && state.headSpeed <= state.targetSpeed*2.2;
+  setSpeedTone(state.headSpeed, inBand, state.headSpeed>6);
+  setExitAlarm(false);
+
+  if(!state.calib.done || calibrating){ statusLine.textContent = calibrating?'Calibrando…':'Pulsa «Calibrar mirada» antes de jugar.'; return; }
+  if(!state.tokens.length){ statusLine.textContent='Escribe un poema y pulsa Iniciar.'; return; }
+
+  const w=stage.width, h=stage.height, target={x:w/2,y:h/2};
+  const dist = Math.hypot(state.gazeScreen.x-target.x, state.gazeScreen.y-target.y);
+  const within = dist < state.toleranceBasePx*devicePixelRatio;
+  if(within){ if(!state.fixSince) state.fixSince = now; } else { state.fixSince = 0; }
+  state.fixated = state.fixSince && (now-state.fixSince >= state.dwellMs);
+
+  if(speedOk && state.fixated) advanceToken();
+  else if(state.headSpeed>6 && !state.fixated) statusLine.textContent = 'Fijación perdida — mantén la letra en foco mientras mueves la cabeza.';
+  else if(!speedOk) statusLine.textContent = `Mueve la cabeza más rápido (objetivo ${state.targetSpeed.toFixed(0)}°/s).`;
+  else statusLine.textContent = 'Manteniendo fijación…';
+}
+
+let lastAdvance=0;
+function advanceToken(){
+  const now = performance.now();
+  if(now-lastAdvance < 250) return;
+  lastAdvance = now; playChime(true); state.streak++;
+  state.tokenIdx = (state.tokenIdx+1) % state.tokens.length;
+  state.fixSince = 0; state.direction = Math.random()<0.5?'H':'V';
+  progressOut.textContent = `${state.tokenIdx}/${state.tokens.length}`;
+  streakOut.textContent = state.streak;
+  dbg('token avanzado', {token:state.tokens[state.tokenIdx], indice:state.tokenIdx, total:state.tokens.length, racha:state.streak, velCabeza:dbgNum(state.headSpeed,1), velObjetivo:state.targetSpeed, direccion:state.direction});
+  maybeLevelUp();
+  statusLine.textContent = '¡Bien! Siguiente objetivo.';
+}
+
+function maybeLevelUp(){
+  if(state.streak>0 && state.streak%5===0){
+    state.level++; levelOut.textContent = state.level;
+    if(autoRamp.checked){
+      state.targetSpeed = Math.min(220, state.targetSpeed+12);
+      speedSlider.value = Math.round(state.targetSpeed); speedVal.textContent = speedSlider.value;
+    }
+    state.pursuit.shape = currentShapeForLevel();
+    dbg('SUBE DE NIVEL', {nivel:state.level, racha:state.streak, velObjetivo:state.targetSpeed, forma:state.pursuit.shape, autoRamp:autoRamp.checked});
+  }
+}
+
+function updatePursuitGame(now){
+  if(!state.calib.done || calibrating){ statusLine.textContent = calibrating?'Calibrando…':'Pulsa «Calibrar mirada» antes de jugar.'; setExitAlarm(false); return; }
+
+  const dtFrame = state.pursuit._lastT ? (now-state.pursuit._lastT)/1000 : 0;
+  state.pursuit._lastT = now;
+  const cycleMs = Math.max(1400, state.pursuit.cycleMs - (state.targetSpeed*6));
+  state.pursuit.t = (state.pursuit.t + dtFrame*1000/cycleMs) % 1;
+
+  const w=stage.width, h=stage.height, cx=w/2, cy=h/2;
+  const amp = Math.min(w,h)*0.32;
+  const p = pathPoint(state.pursuit.shape, state.pursuit.t);
+  const targetPx = { x: cx + p.x*amp, y: cy + p.y*amp };
+  state.pursuit.targetPx = targetPx;
+
+  const tolPx = state.toleranceBasePx*devicePixelRatio;
+  const dist = Math.hypot(state.gazeScreen.x-targetPx.x, state.gazeScreen.y-targetPx.y);
+  const inside = dist < tolPx;
+  state.fixated = inside;
+
+  state.pursuit.totalFrames++;
+  if(inside) state.pursuit.insideFrames++;
+
+  setSpeedTone(state.headSpeed, state.headSpeed<15, true); // tono suave de referencia de movimiento cefálico
+  setExitAlarm(!inside);
+
+  // fin de ciclo -> evaluar
+  const cycleId = Math.floor(performance.now()/cycleMs);
+  if(cycleId !== state.pursuit.lastCycleId && state.pursuit.totalFrames>10){
+    const pct = state.pursuit.insideFrames/state.pursuit.totalFrames;
+    state.pursuit.lastCycleId = cycleId;
+    dbg('vuelta completa', {porcentajeDentro:dbgNum(pct*100,0), framesDentro:state.pursuit.insideFrames, framesTotal:state.pursuit.totalFrames, umbral:65, resultado:pct>=0.65?'acierto':'fallo', racha:state.streak, cycleMs:dbgNum(cycleMs,0), forma:state.pursuit.shape});
+    if(pct >= 0.65){
+      state.streak++; playChime(true);
+      progressOut.textContent = `${Math.round(pct*100)}%`;
+      streakOut.textContent = state.streak;
+      maybeLevelUp();
+      statusLine.textContent = `Vuelta completa: ${Math.round(pct*100)}% dentro del área. ¡Bien!`;
+    } else {
+      playChime(false);
+      statusLine.textContent = `Vuelta completa: solo ${Math.round(pct*100)}% dentro del área. Sigue al objeto sin mover tanto la cabeza.`;
+    }
+    state.pursuit.insideFrames=0; state.pursuit.totalFrames=0;
+  } else {
+    statusLine.textContent = inside ? 'Dentro del área — bien.' : 'Fuera del área — sigue el objeto con la mirada.';
+  }
+}
+
+function drawGazeCursor(inside){
+  const g = state.gazeScreen;
+  const r = 9*devicePixelRatio;
+  sctx.save();
+  sctx.beginPath(); sctx.arc(g.x,g.y,r,0,7);
+  sctx.fillStyle = inside ? 'rgba(63,182,168,0.95)' : 'rgba(212,101,90,0.95)';
+  sctx.fill();
+  sctx.lineWidth = 2*devicePixelRatio; sctx.strokeStyle = '#0b1220'; sctx.stroke();
+  sctx.lineWidth = 1.5*devicePixelRatio; sctx.strokeStyle = '#0b1220';
+  sctx.beginPath();
+  sctx.moveTo(g.x-r*1.6,g.y); sctx.lineTo(g.x+r*1.6,g.y);
+  sctx.moveTo(g.x,g.y-r*1.6); sctx.lineTo(g.x,g.y+r*1.6);
+  sctx.stroke();
+  sctx.restore();
+}
+
+function drawStage(now){
+  const w=stage.width, h=stage.height, cx=w/2, cy=h/2;
+  sctx.clearRect(0,0,w,h);
+
+  if(state.mode==='letters'){
+    sctx.strokeStyle = 'rgba(147,161,184,.5)'; sctx.lineWidth = 3*devicePixelRatio;
+    sctx.beginPath();
+    const len = 70*devicePixelRatio;
+    if(state.direction==='H'){ sctx.moveTo(cx-len,cy+140*devicePixelRatio); sctx.lineTo(cx+len,cy+140*devicePixelRatio); }
+    else { sctx.moveTo(cx,cy+90*devicePixelRatio); sctx.lineTo(cx,cy+220*devicePixelRatio); }
+    sctx.stroke();
+
+    sctx.strokeStyle = state.calib.done ? (state.fixated?'#3fb6a8':'#d4655a') : '#e0a53f';
+    sctx.lineWidth = 2*devicePixelRatio;
+    sctx.beginPath(); sctx.arc(cx,cy,state.toleranceBasePx*devicePixelRatio,0,7); sctx.stroke();
+
+    const tok = state.tokens.length? state.tokens[state.tokenIdx] : '·';
+    sctx.fillStyle = '#e9edf4';
+    sctx.font = `${(unitSelect.value==='letter'?120:52)*devicePixelRatio}px -apple-system,sans-serif`;
+    sctx.textAlign='center'; sctx.textBaseline='middle';
+    sctx.fillText(tok===' '?'␣':tok, cx, cy);
+
+    if(state.calib.done){
+      const rawInside = Math.hypot(state.gazeScreen.x-cx, state.gazeScreen.y-cy) < state.toleranceBasePx*devicePixelRatio;
+      drawGazeCursor(rawInside);
+    }
+  } else {
+    // dibujar trayectoria tenue completa
+    sctx.strokeStyle = 'rgba(147,161,184,.25)'; sctx.lineWidth = 1.5*devicePixelRatio;
+    sctx.beginPath();
+    const amp = Math.min(w,h)*0.32;
+    for(let i=0;i<=200;i++){
+      const p = pathPoint(state.pursuit.shape, i/200);
+      const x=cx+p.x*amp, y=cy+p.y*amp;
+      i===0? sctx.moveTo(x,y) : sctx.lineTo(x,y);
+    }
+    sctx.stroke();
+
+    const tp = state.pursuit.targetPx || {x:cx,y:cy};
+    const tolPx = state.toleranceBasePx*devicePixelRatio;
+    sctx.strokeStyle = state.fixated ? '#3fb6a8' : '#d4655a';
+    sctx.lineWidth = 2.5*devicePixelRatio;
+    sctx.beginPath(); sctx.arc(tp.x,tp.y,tolPx,0,7); sctx.stroke();
+
+    sctx.fillStyle = '#e9edf4';
+    sctx.beginPath(); sctx.arc(tp.x,tp.y,10*devicePixelRatio,0,7); sctx.fill();
+
+    if(state.calib.done) drawGazeCursor(state.fixated);
+  }
+
+  // punto guía durante calibración
+  if(calibrating){
+    const px = cx + state.calibTargetNX*(w*0.42), py = cy + state.calibTargetNY*(h*0.38);
+    sctx.fillStyle = '#e0a53f';
+    sctx.beginPath(); sctx.arc(px,py,14*devicePixelRatio,0,7); sctx.fill();
+  }
+}
+
+function updateHud(){
+  const gain = state.headSpeed>5 ? (state.eyeSpeed/Math.max(state.headSpeed,1)).toFixed(2) : '—';
+  const noFace = (performance.now() - state.lastFaceSeenTime) > 700;
+  hud.innerHTML = `
+    <div class="chip ${noFace?'state-bad':''}">Rostro <b>${noFace?'no detectado':'OK'}</b></div>
+    <div class="chip">Vel. cabeza <b>${state.headSpeed.toFixed(0)}°/s</b> (${state.headSource||'—'})</div>
+    <div class="chip">Vel. ocular <b>${state.eyeSpeed.toFixed(0)}°/s</b></div>
+    <div class="chip">Ganancia VOR aprox. <b>${gain}</b></div>
+    <div class="chip ${state.calib.done ? (state.fixated?'state-ok':'state-bad') : 'state-warn'}">Objetivo <b>${state.calib.done?(state.fixated?'dentro':'fuera'):'sin calibrar'}</b></div>
+    <div class="chip">Forma <b>${state.mode==='pursuit'?state.pursuit.shape:'—'}</b></div>
+    <div class="chip">Dirección cabeza <b>${dirLabel()}</b></div>
+    <div class="chip">Iris D/I <b>${state.gaze.right?state.gaze.right.hx.toFixed(2):'—'},${state.gaze.left?state.gaze.left.hx.toFixed(2):'—'}</b></div>
+  `;
+}
+function dirLabel(){
+  const {x,y} = state.headVec;
+  if(Math.hypot(x,y) < 8) return 'quieto';
+  return Math.abs(x)>Math.abs(y) ? (x>0?'izquierda':'derecha') : (y>0?'abajo':'arriba');
+}
+
+/* ---------- start / stop ---------- */
+startBtn.addEventListener('click', async ()=>{
+  startBtn.disabled = true;
+  statusLine.textContent = 'Solicitando cámara y sensores…';
+  try{
+    dbg('INICIAR', {seguro:window.isSecureContext, dpr:devicePixelRatio, lienzo:`${stage.width}x${stage.height}`, ua:navigator.userAgent});
+    await initCamera();
+    await requestMotionPermission();
+    if(!actx) initAudio();
+    dbg('audio', {estado: actx && actx.state, sampleRate: actx && actx.sampleRate});
+    if(!state.faceLandmarker) await initFaceLandmarker();
+    tokenize(); resize(); resetGameProgress();
+    state.running = true;
+    dbg('bucle principal', 'arrancado', {modo:state.mode, tokens:state.tokens.length});
+    calBtn.disabled = false; stopBtn.disabled = false;
+    statusLine.textContent = 'Listo. Pulsa «Calibrar mirada (9 puntos)».';
+    requestAnimationFrame(detectLoop);
+  }catch(err){
+    console.error('[VOR] fallo al iniciar:', err);
+    let hint = '';
+    if(err.name==='NotAllowedError') hint = ' Diste "no" al permiso de cámara: revísalo en el candado de la barra de direcciones.';
+    else if(err.name==='NotFoundError') hint = ' No se detectó ninguna cámara en este dispositivo.';
+    else if(!window.isSecureContext) hint = ' Esta página no está en HTTPS/localhost, así que el navegador bloquea la cámara.';
+    statusLine.textContent = 'Error: '+err.message+hint;
+    showError('No se pudo iniciar: '+err.message+hint);
+    startBtn.disabled = false;
+  }
+});
+stopBtn.addEventListener('click', ()=>{
+  state.running = false; state.calib.done = false; state.calib.coefX=null; state.calib.coefY=null;
+  oneEuroX.reset(); oneEuroY.reset();
+  calBtn.disabled = true; stopBtn.disabled = true; startBtn.disabled = false;
+  if(gainNode) gainNode.gain.value = 0;
+  if(buzzGain) buzzGain.gain.value = 0;
+  statusLine.textContent = 'Detenido.';
+  dbg('DETENIDO', {filasGuardadas:dbgFrames.length});
+});
+
+resize(); tokenize(); resetGameProgress();
+window.vorDebug = { state, frames:dbgFrames, csv:dbgCsv, download:dbgDownload };
+dbg('carga', 'página lista. Inspecciona window.vorDebug.state en la consola', {tokens:state.tokens.length, modo:state.mode});
+</script>
+</body>
+</html>

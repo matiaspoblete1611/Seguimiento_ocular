@@ -1,0 +1,2150 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<title>Seguimiento ocular — sigue el punto</title>
+<style>
+  :root{
+    --bg:#0b1220; --bg-2:#111b2e; --ink:#e9edf4; --ink-dim:#93a1b8; --line:#233047;
+    --good:#3fb6a8; --warn:#e0a53f; --bad:#d4655a;
+    font-size:16px;
+  }
+  *{ box-sizing:border-box; }
+  html,body{ margin:0; padding:0; height:100%; background:var(--bg); color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+    -webkit-tap-highlight-color:transparent; overscroll-behavior:none; }
+
+  #app{ display:flex; flex-direction:column; height:100dvh;
+    padding-top:env(safe-area-inset-top,0px); padding-bottom:env(safe-area-inset-bottom,0px); }
+
+  header{ display:flex; align-items:center; gap:10px; flex-wrap:wrap;
+    padding:8px 12px; border-bottom:1px solid var(--line); background:var(--bg-2); }
+  header h1{ font-size:14px; font-weight:600; margin:0; letter-spacing:.2px; white-space:nowrap; }
+  header .sub{ font-size:11.5px; color:var(--ink-dim); flex:1 1 200px; min-width:0;
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .actions{ display:flex; gap:6px; flex-wrap:wrap; }
+  button{ font-family:inherit; font-size:13px; font-weight:600; cursor:pointer;
+    background:var(--good); color:#04211d; border:none; border-radius:7px; padding:8px 14px; }
+  button.secondary{ background:transparent; color:var(--ink); border:1px solid var(--line); }
+  button.ghost{ background:transparent; color:var(--ink-dim); border:1px solid var(--line); padding:8px 10px; }
+  button:disabled{ opacity:.4; cursor:default; }
+  button:active:not(:disabled){ transform:translateY(1px); }
+
+  #settings{ border-bottom:1px solid var(--line); background:var(--bg-2); font-size:12.5px; }
+  #settings summary{ padding:8px 12px; cursor:pointer; color:var(--ink-dim); font-size:12px;
+    list-style:none; user-select:none; }
+  #settings summary::-webkit-details-marker{ display:none; }
+  #settings summary::before{ content:"▸ "; }
+  #settings[open] summary::before{ content:"▾ "; }
+  .grid{ display:flex; flex-wrap:wrap; gap:10px 18px; padding:0 12px 12px; align-items:flex-end; }
+  .field{ display:flex; flex-direction:column; gap:4px; min-width:140px; flex:1 1 150px; max-width:260px; }
+  .field label{ color:var(--ink-dim); font-size:11.5px; }
+  .field .val{ color:var(--ink); font-variant-numeric:tabular-nums; }
+  select,input[type=range]{ width:100%; }
+  select{ background:var(--bg); color:var(--ink); border:1px solid var(--line);
+    border-radius:6px; padding:6px 8px; font-size:13px; font-family:inherit; }
+  .checkrow{ display:flex; align-items:center; gap:6px; font-size:12px; color:var(--ink-dim); margin-top:4px; }
+  .checkrow input{ accent-color:var(--good); }
+  .checkrow label{ margin:0; color:var(--ink-dim); }
+
+  main{ flex:1; min-height:0; position:relative; overflow:hidden; display:flex;
+    background:radial-gradient(circle at 50% 45%, #101c30 0%, #0b1220 72%); }
+  #play{ position:relative; flex:1; min-width:0; }
+  #stage{ position:absolute; inset:0; width:100%; height:100%; display:block; touch-action:none; }
+
+  #camWrap{ position:relative; flex:none; width:154px; border-left:1px solid var(--line);
+    background:#000; }
+  #cam{ display:block; width:100%; height:116px; object-fit:cover; transform:scaleX(-1); }
+  #camOverlay{ position:absolute; top:0; left:0; width:100%; height:116px;
+    transform:scaleX(-1); pointer-events:none; }
+  #camInfo{ padding:8px 10px; font-size:11px; line-height:1.6; color:var(--ink-dim); }
+
+  #hud{ position:absolute; top:8px; left:8px; right:8px; display:flex; flex-wrap:wrap;
+    gap:6px 8px; font-size:11.5px; color:var(--ink-dim); font-variant-numeric:tabular-nums;
+    pointer-events:none; }
+  #hud .chip{ background:rgba(17,27,46,.86); border:1px solid var(--line); border-radius:6px;
+    padding:4px 8px; white-space:nowrap; }
+  #hud .chip b{ color:var(--ink); font-weight:600; }
+  #hud .ok b{ color:var(--good); } #hud .bad b{ color:var(--bad); } #hud .warn b{ color:var(--warn); }
+
+  #warnBar{ position:absolute; top:8px; left:50%; transform:translateX(-50%); z-index:4;
+    background:rgba(58,20,24,.94); border:1px solid var(--bad); color:#ffd9d5;
+    font-size:12px; padding:6px 12px; border-radius:6px; display:none; max-width:80%; text-align:center; }
+
+  #calibHint{ position:absolute; top:14px; left:50%; transform:translateX(-50%); z-index:4;
+    background:rgba(17,27,46,.9); border:1px solid var(--line); color:var(--ink-dim);
+    font-size:13px; padding:6px 14px; border-radius:20px; display:none; white-space:nowrap; }
+
+  .screen{ position:absolute; inset:0; z-index:6; display:none; align-items:center;
+    justify-content:center; padding:20px; background:rgba(11,18,32,.94); overflow:auto; }
+  .screen.show{ display:flex; }
+  .screen .box{ max-width:560px; width:100%; }
+  .screen h2{ font-size:18px; margin:0 0 10px; }
+  .screen p{ font-size:13.5px; color:var(--ink-dim); line-height:1.6; margin:0 0 12px; }
+  .screen ul{ text-align:left; font-size:13px; color:var(--ink-dim); line-height:1.65;
+    padding-left:18px; margin:0 0 16px; }
+  .screen li b{ color:var(--ink); }
+  .screen .row{ display:flex; gap:8px; flex-wrap:wrap; }
+
+  #resBody{ font-size:13px; color:var(--ink-dim); }
+  #resScore{ font-size:40px; font-weight:700; color:var(--ink); line-height:1.1; margin:2px 0 4px;
+    font-variant-numeric:tabular-nums; }
+  .stat{ display:flex; justify-content:space-between; gap:10px; padding:5px 0;
+    border-bottom:1px solid rgba(35,48,71,.6); }
+  .stat b{ color:var(--ink); }
+  .bars{ margin:12px 0 4px; }
+  .bar{ display:flex; align-items:center; gap:8px; margin:4px 0; font-size:11.5px; }
+  .bar .lbl{ width:104px; color:var(--ink-dim); flex:none; }
+  .bar .track{ flex:1; height:7px; background:rgba(35,48,71,.75); border-radius:4px; overflow:hidden; }
+  .bar .fill{ height:100%; background:var(--good); }
+  .bar .pct{ width:38px; text-align:right; color:var(--ink); font-variant-numeric:tabular-nums; }
+
+  footer{ display:flex; justify-content:space-between; gap:10px; flex-wrap:wrap;
+    padding:7px 12px; border-top:1px solid var(--line); background:var(--bg-2);
+    font-size:11.5px; color:var(--ink-dim); }
+  footer b{ color:var(--ink); font-variant-numeric:tabular-nums; }
+
+  #errBanner{ display:none; position:fixed; left:0; right:0; bottom:0; z-index:9999;
+    background:#3a1418; color:#ffd9d5; font-size:12px; padding:10px 14px;
+    border-top:2px solid var(--bad); white-space:pre-wrap; }
+
+  @media (max-width:720px){
+    header .sub{ display:none; }
+    #hud{ font-size:10.5px; }
+    main{ display:block; }
+    #camWrap{ position:absolute; right:8px; bottom:8px; width:94px; z-index:3;
+      border:1px solid var(--line); border-radius:8px; overflow:hidden; opacity:.8; }
+    #cam{ height:70px; }
+    #camOverlay{ height:70px; }
+    #camInfo{ display:none; }
+  }
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <h1>Seguimiento ocular</h1>
+    <span class="sub">Sigue el punto con la mirada. Si se sale del área, suena.</span>
+    <div class="actions">
+      <button id="btnStart">Iniciar</button>
+      <button id="btnCal" class="secondary" disabled>Calibrar</button>
+      <button id="btnCenter" class="secondary" disabled title="Corrige la deriva sin recalibrar">Recentrar</button>
+      <button id="btnPause" class="secondary" disabled>Pausa</button>
+      <button id="btnStop" class="secondary" disabled>Detener</button>
+      <button id="btnHelp" class="ghost" title="Cómo se juega">?</button>
+    </div>
+  </header>
+
+  <details id="settings" open>
+    <summary>Ajustes</summary>
+    <div class="grid">
+      <div class="field">
+        <label for="modeSel">Recorrido</label>
+        <select id="modeSel">
+          <option value="h">Horizontal (ida y vuelta)</option>
+          <option value="v">Vertical (arriba y abajo)</option>
+          <option value="cross">Cruz (4 direcciones)</option>
+          <option value="star">Estrella (8 direcciones)</option>
+          <option value="circle">Círculo</option>
+          <option value="eight">Ocho</option>
+          <option value="random">Saltos aleatorios</option>
+          <option value="mixto" selected>Mixto (va cambiando de dirección)</option>
+        </select>
+      </div>
+
+      <div class="field">
+        <label for="speedRange">Velocidad: <span class="val" id="speedShow">×0,30</span></label>
+        <input type="range" id="speedRange" min="8" max="110" step="2" value="30">
+      </div>
+
+      <div class="field">
+        <label for="tolRange">Área de acierto: <span class="val" id="tolShow">70 px</span></label>
+        <input type="range" id="tolRange" min="20" max="160" step="5" value="70">
+      </div>
+
+      <div class="field">
+        <label for="durSel">Duración de la ronda</label>
+        <select id="durSel">
+          <option value="30">30 s</option>
+          <option value="60" selected>60 s</option>
+          <option value="120">120 s</option>
+          <option value="0">Sin límite</option>
+        </select>
+      </div>
+
+      <div class="field">
+        <label for="calSel">Calibración</label>
+        <select id="calSel">
+          <option value="25">Ultra precisa (25 puntos)</option>
+          <option value="16" selected>Precisa (16 puntos)</option>
+          <option value="9">Rápida (9 puntos)</option>
+        </select>
+        <div class="checkrow"><input type="checkbox" id="eyesOnlyChk" checked><label for="eyesOnlyChk">Usar solo ojos (ignorar movimiento de cabeza)</label></div>
+        <div class="checkrow"><input type="checkbox" id="gazeChk" checked><label for="gazeChk">Mostrar mirada fuera del juego</label></div>
+      </div>
+
+      <div class="field">
+        <label for="volRange">Volumen: <span class="val" id="volShow">70 %</span></label>
+        <input type="range" id="volRange" min="0" max="100" step="5" value="70">
+        <div class="checkrow"><input type="checkbox" id="soundChk" checked><label for="soundChk">Alarma sonora</label></div>
+      </div>
+
+      <div class="field">
+        <label>&nbsp;</label>
+        <div class="checkrow"><input type="checkbox" id="guideChk" checked><label for="guideChk">Tono guía (más agudo al acercarse)</label></div>
+        <div class="checkrow"><input type="checkbox" id="rampChk" checked><label for="rampChk">Subir dificultad sola cada 10 s</label></div>
+        <div class="checkrow"><input type="checkbox" id="pointerChk"><label for="pointerChk">Modo prueba con puntero (sin cámara)</label></div>
+      </div>
+
+      <div class="field">
+        <label>&nbsp;</label>
+        <button id="btnCsv" class="secondary">Descargar CSV</button>
+      </div>
+    </div>
+  </details>
+
+  <main id="main">
+    <div id="play">
+      <canvas id="stage"></canvas>
+      <div id="hud"></div>
+      <div id="calibHint"></div>
+      <div id="warnBar"></div>
+    </div>
+
+    <div id="camWrap">
+      <video id="cam" playsinline muted autoplay></video>
+      <canvas id="camOverlay"></canvas>
+      <div id="camInfo">Cámara apagada</div>
+    </div>
+
+    <div id="overlay" class="screen show">
+      <div class="box">
+        <h2>Cómo se juega</h2>
+        <ul>
+          <li>Un punto recorre la pantalla en <b>distintas direcciones</b>. Hay que seguirlo con la mirada, no con la cabeza.</li>
+          <li>Alrededor del punto hay un <b>área de acierto</b>. Mientras tu mirada está adentro sumás puntos; si sale, <b>suena la alarma</b>.</li>
+          <li>Primero se pulsa <b>Iniciar</b> (permiso de cámara) y después <b>Calibrar</b>: mirá los puntos sin mover la cabeza (16 en modo preciso, 9 en rápido).</li>
+          <li>Si con el correr de los minutos la mirada se corre, pulsá <b>Recentrar</b> y mirá el punto del centro: corrige la deriva sin recalibrar todo.</li>
+          <li>Buena luz de frente, sin contraluz, y el iris despejado (sin pelo ni reflejos en los lentes).</li>
+          <li>Al terminar la ronda ves <b>el porcentaje de acierto por dirección</b>: ahí se nota hacia dónde le cuesta más seguir.</li>
+        </ul>
+        <p>Se usa el modelo <b>MediaPipe Face Landmarker</b>, que corre en tu equipo: el video no sale del navegador. La estimación es aproximada; no es una medición clínica.</p>
+        <div class="row"><button id="btnOk">Entendido</button></div>
+      </div>
+    </div>
+
+    <div id="results" class="screen">
+      <div class="box">
+        <h2>Resultado de la ronda</h2>
+        <div id="resScore">0</div>
+        <div id="resBody"></div>
+        <div class="row" style="margin-top:16px;">
+          <button id="btnAgain">Otra ronda</button>
+          <button id="btnRecal" class="secondary">Recalibrar</button>
+          <button id="btnCsv2" class="secondary">Descargar CSV</button>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <footer>
+    <span id="status">Esperando inicio…</span>
+    <span>Tiempo <b id="fTime">0:00</b> · Dentro <b id="fPct">—</b> · Puntaje <b id="fScore">0</b></span>
+  </footer>
+</div>
+
+<div id="errBanner"></div>
+<script type="module">
+/* ═══════════════════════════════════════════════════════════════════════════
+   Seguimiento ocular — juego de persecución con alarma
+   Reusa el modelo MediaPipe Face Landmarker (iris 468-477 + pose de cabeza) y
+   la calibración por regresión de 9 puntos del entrenador VOR.
+   Todo el procesamiento es local: el video no sale del navegador.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ---------- 0. Errores visibles (en el móvil no hay consola) ---------- */
+const errBanner = document.getElementById('errBanner');
+function showError(msg){
+  errBanner.style.display = 'block';
+  errBanner.textContent = '⚠ ' + msg;
+  console.error('[ojo]', msg);
+}
+window.addEventListener('error', e => showError('Error de script: ' + (e.message || e)));
+window.addEventListener('unhandledrejection', e =>
+  showError('Error async: ' + (e.reason?.message ?? e.reason)));
+if(!window.isSecureContext){
+  showError('Esta página necesita HTTPS o localhost: sin contexto seguro el navegador bloquea la cámara. ' +
+            'En Windows, hacé doble clic en "abrir-juego.bat" (está en la misma carpeta): levanta un servidor local y abre el juego en http://localhost.');
+}
+if(location.protocol === 'file:'){
+  showError('Estás abriendo el archivo con doble clic (file://). Si el navegador no te da la cámara, ' +
+            'cerrá esta pestaña y usá "abrir-juego.bat": sirve el juego en http://localhost, donde la cámara sí funciona.');
+}
+
+/* ---------- 1. Atajos y utilidades ---------- */
+const $ = id => document.getElementById(id);
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+const lerp = (a, b, t) => a + (b - a) * t;
+const rand = (a, b) => a + Math.random() * (b - a);
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const hypot = Math.hypot;
+
+const stage = $('stage');
+const sctx = stage.getContext('2d');
+const cam = $('cam');
+const camOverlay = $('camOverlay');
+const octx = camOverlay.getContext('2d');
+const mainEl = $('play');
+
+const overlay = $('overlay');
+const results = $('results');
+const calibHint = $('calibHint');
+const warnBar = $('warnBar');
+const hud = $('hud');
+const camInfo = $('camInfo');
+
+const btnStart = $('btnStart'), btnCal = $('btnCal'), btnPause = $('btnPause');
+const btnStop = $('btnStop'), btnHelp = $('btnHelp'), btnOk = $('btnOk');
+const btnCenter = $('btnCenter');
+const btnAgain = $('btnAgain'), btnRecal = $('btnRecal');
+const btnCsv = $('btnCsv'), btnCsv2 = $('btnCsv2');
+
+const calSel = $('calSel'), gazeChk = $('gazeChk'), eyesOnlyChk = $('eyesOnlyChk');
+
+const modeSel = $('modeSel'), durSel = $('durSel');
+const speedRange = $('speedRange'), speedShow = $('speedShow');
+const tolRange = $('tolRange'), tolShow = $('tolShow');
+const volRange = $('volRange'), volShow = $('volShow');
+const soundChk = $('soundChk'), guideChk = $('guideChk');
+const rampChk = $('rampChk'), pointerChk = $('pointerChk');
+
+const statusEl = $('status');
+const fTime = $('fTime'), fPct = $('fPct'), fScore = $('fScore');
+
+const DPR = () => Math.min(window.devicePixelRatio || 1, 2.5);
+const fmtPct = v => (isFinite(v) ? Math.round(v * 100) + ' %' : '—');
+const fmtClock = s => {
+  s = Math.max(0, Math.ceil(s));
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+};
+
+/* ---------- 2. Estado ---------- */
+const state = {
+  /* máquina de estados: idle → playing → results */
+  phase: 'idle',
+  running: false,
+  paused: false,
+  calibrating: false,
+  pointer: false,
+
+  /* lienzo (todo en px CSS; el canvas se escala por devicePixelRatio) */
+  w: 0, h: 0,
+  ready: false,
+
+  /* visión */
+  lm: null,                // instancia FaceLandmarker
+  lastVideoTime: -1,
+  lastFace: -1e9,
+  lastGaze: -1e9,
+  eye: null,               // ojos normalizados del último cuadro
+  raw: null,
+  gazeScreen: { x: 0, y: 0 },
+  gazeValid: false,
+  gazeConf: 0,
+  head: { yaw: 0, pitch: 0, roll: 0, tx: 0, ty: 0, tz: 0 },
+  detMs: 0, detCount: 0, fps: 0, detFps: 0,
+
+  calib: { done: false, models: null, errPx: 0, n: 0, bias: { x: 0, y: 0 } },
+  calTarget: null,
+  calProg: 0,
+  calSesion: 0,
+  recentering: false,
+
+  /* juego */
+  shape: 'cross',
+  speedFactor: 0.30,
+  tolPx: 70,
+  roundLen: 60,
+  roundLeft: 60,
+  elapsed: 0,
+  countdown: 0,
+
+  target: { x: 0, y: 0 },
+  prevTarget: { x: 0, y: 0 },
+  dist: 0,
+  inside: false,
+  insideRun: 0,
+  bestRun: 0,
+  outsideRun: 0,
+
+  score: 0,
+  insideMs: 0,
+  totalMs: 0,
+  lostMs: 0,
+  trackValid: false,
+  dirNow: -1,
+  dirStats: Array.from({ length: 8 }, () => ({ in: 0, total: 0 })),
+
+  trail: [],
+  rampAcc: 0,
+  lastNow: 0,
+  frames: 0, fpsT: 0
+};
+
+/* Los 8 sectores de dirección, con y hacia abajo (0 = derecha). */
+const DIRS = [
+  { lbl: '→ derecha',           short: '→' },
+  { lbl: '↘ abajo-derecha',     short: '↘' },
+  { lbl: '↓ abajo',             short: '↓' },
+  { lbl: '↙ abajo-izquierda',   short: '↙' },
+  { lbl: '← izquierda',         short: '←' },
+  { lbl: '↖ arriba-izquierda',  short: '↖' },
+  { lbl: '↑ arriba',            short: '↑' },
+  { lbl: '↗ arriba-derecha',    short: '↗' }
+];
+function dirBin(vx, vy){
+  if(hypot(vx, vy) < 1.5) return -1;
+  let a = Math.atan2(vy, vx) * 180 / Math.PI;
+  if(a < 0) a += 360;
+  return Math.round(a / 45) % 8;
+}
+
+/* ---------- 3. Audio (WebAudio, sin archivos) ---------- */
+const audio = {
+  ctx: null, master: null,
+  gOsc: null, gGain: null,
+  lastBeep: 0, phase: 0,
+
+  ensure(){
+    if(this.ctx) return;
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if(!AC) return;
+    this.ctx = new AC();
+    this.master = this.ctx.createGain();
+    this.master.gain.value = +volRange.value / 100;
+    this.master.connect(this.ctx.destination);
+  },
+  resume(){ this.ctx?.resume?.(); },
+  setVolume(v){ if(this.master) this.master.gain.setTargetAtTime(v, this.ctx.currentTime, 0.02); },
+
+  beep(freq, dur, vol, type = 'square', delay = 0){
+    if(!this.ctx) return;
+    const t0 = this.ctx.currentTime + delay;
+    const o = this.ctx.createOscillator(), g = this.ctx.createGain();
+    o.type = type;
+    o.frequency.setValueAtTime(freq, t0);
+    g.gain.setValueAtTime(0.0001, t0);
+    g.gain.exponentialRampToValueAtTime(Math.max(0.0002, vol), t0 + 0.008);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    o.connect(g).connect(this.master);
+    o.start(t0); o.stop(t0 + dur + 0.03);
+  },
+
+  /* Alarma: pitidos alternos 660/880 Hz. Cuanto más lejos la mirada del
+     objetivo, más seguido suenan (300 ms → 160 ms), así el operador puede
+     distinguir "se fue un poco" de "se perdió". */
+  alarmTick(now, sev){
+    if(!this.ctx || !soundChk.checked) return;
+    const interval = 300 - 140 * clamp(sev, 0, 1);
+    if(now - this.lastBeep < interval) return;
+    this.lastBeep = now;
+    this.phase ^= 1;
+    this.beep(this.phase ? 880 : 660, 0.085, 0.16, 'square');
+  },
+  alarmOff(){ this.lastBeep = 0; },
+
+  guide(freq, vol){
+    if(!this.ctx || !soundChk.checked) return;
+    const t = this.ctx.currentTime;
+    if(!this.gOsc){
+      this.gOsc = this.ctx.createOscillator();
+      this.gGain = this.ctx.createGain();
+      this.gOsc.type = 'sine';
+      this.gGain.gain.value = 0;
+      this.gOsc.connect(this.gGain).connect(this.master);
+      this.gOsc.start();
+    }
+    this.gOsc.frequency.setTargetAtTime(freq, t, 0.06);
+    this.gGain.gain.setTargetAtTime(vol, t, 0.10);
+  },
+  guideOff(){
+    if(this.gGain && this.ctx) this.gGain.gain.setTargetAtTime(0, this.ctx.currentTime, 0.15);
+  },
+
+  chime(good){
+    const notes = good ? [523, 659, 784] : [392, 311];
+    notes.forEach((f, i) => this.beep(f, 0.18, 0.11, 'sine', i * 0.12));
+  }
+};
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   4. Visión: MediaPipe Face Landmarker
+   El modelo pesa ~3,7 MB y se baja del CDN la primera vez. Se importa el
+   paquete de forma dinámica para que, si el CDN falla, la interfaz siga viva
+   y el error se vea en pantalla en vez de dejar una página muerta.
+   ═══════════════════════════════════════════════════════════════════════════ */
+const MP_VERSION = '0.10.21';
+const MP_BASE = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MP_VERSION}`;
+const MODEL_URL = 'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task';
+
+/* Índices en la malla de 478 puntos. El iris son los últimos 10. */
+const IDX = {
+  rOuter: 33, rInner: 133, rTop: 159, rBot: 145, rIris: 468,
+  lOuter: 263, lInner: 362, lTop: 386, lBot: 374, lIris: 473
+};
+
+async function cargarMediaPipe(){
+  if(state.FL) return state.FL;
+  const urls = [`${MP_BASE}/vision_bundle.mjs`, MP_BASE];
+  let ultimo;
+  for(const url of urls){
+    try{
+      const mod = await import(url);
+      const FL = mod.FaceLandmarker || mod.default?.FaceLandmarker;
+      const FR = mod.FilesetResolver || mod.default?.FilesetResolver;
+      if(FL && FR){ state.FL = FL; state.FR = FR; return FL; }
+    }catch(e){ ultimo = e; }
+  }
+  throw new Error('No se pudo cargar MediaPipe desde el CDN' + (ultimo ? ': ' + ultimo.message : ''));
+}
+
+async function crearLandmarker(){
+  const FL = await cargarMediaPipe();
+  statusEl.textContent = 'Preparando el modelo (una sola vez)…';
+  const fileset = await state.FR.forVisionTasks(`${MP_BASE}/wasm`);
+  const opts = {
+    baseOptions: { modelAssetPath: MODEL_URL, delegate: 'GPU' },
+    outputFaceBlendshapes: false,
+    outputFacialTransformationMatrixes: true,
+    runningMode: 'VIDEO',
+    numFaces: 1
+  };
+  try{
+    return await FL.createFromOptions(fileset, opts);
+  }catch(e){
+    console.warn('[ojo] GPU no disponible, se usa CPU:', e);
+    opts.baseOptions.delegate = 'CPU';
+    return await FL.createFromOptions(fileset, opts);
+  }
+}
+
+async function iniciarCamara(){
+  if(!navigator.mediaDevices?.getUserMedia){
+    throw new Error('Este navegador no permite pedir la cámara (getUserMedia). Abrí la página por http://localhost con Chrome, Edge o Firefox actualizados.');
+  }
+
+  /* 1280x720: más píxeles de iris = menos ruido. Si la cámara no lo soporta,
+     se reintenta con el formato por defecto. */
+  let stream;
+  try{
+    stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 } },
+      audio: false
+    });
+  }catch(e){
+    if(e.name !== 'OverconstrainedError') throw e;
+    stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } },
+      audio: false
+    });
+  }
+
+  cam.srcObject = stream;
+
+  /* Espera a que el video tenga metadatos. Si ya los tenía (cámara rápida o
+     segunda vez), no hay que esperar un evento que nunca va a llegar. */
+  if(cam.readyState < 1){
+    await new Promise((resolve, reject) => {
+      const ok = () => { limpiar(); resolve(); };
+      const fail = () => { limpiar(); reject(new Error('La cámara se abrió pero no entregó imagen.')); };
+      const to = setTimeout(() => { limpiar(); reject(new Error('La cámara tardó demasiado en entregar imagen.')); }, 9000);
+      function limpiar(){
+        clearTimeout(to);
+        cam.removeEventListener('loadedmetadata', ok);
+        cam.removeEventListener('error', fail);
+      }
+      cam.addEventListener('loadedmetadata', ok);
+      cam.addEventListener('error', fail);
+    });
+  }
+
+  try{ await cam.play(); }catch(e){ /* con muted+autoplay suele arrancar igual */ }
+  return stream;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   5. Mirada: ojos normalizados por pose + regresión calibrada
+   ───────────────────────────────────────────────────────────────────────────
+   Por qué esto funciona mejor que mirar el iris en la imagen:
+
+   1) Marco local del ojo (como la normalización de MPIIGaze): se arma un
+      triedro 3D con las comisuras y los párpados de CADA ojo y se proyecta el
+      iris en ese marco. Al girar la cabeza, el triedro gira con ella, así que
+      el dato que llega a la regresión es el giro del ojo respecto de la cara,
+      no respecto de la cámara. Eso saca de la ecuación la mayor fuente de
+      desviación cuando la cabeza se mueve.
+   2) Se usan los 5 puntos del iris (no el central solo) y los dos ojos por
+      separado. Un ojo tapado por pelo o un guiño no rompe la medición.
+   3) Regresión ridge con features estandarizadas y lambda elegida por
+      validación cruzada. Antes, con 9 puntos y lambda 1e-3, los coeficientes
+      de yaw/pitch quedaban sin restringir y cualquier movimiento de cabeza
+      mandaba la mirada lejos. Ahora el modelo se elige por error real.
+   4) Calibración de 16 puntos (o 9 en modo rápido), muestreo robusto con
+      mediana y descarte de parpadeos.
+   5) Recalibración de deriva ("Recentrar"): mirás el centro y se corrige el
+      sesgo acumulado, sin repetir los 16 puntos.
+
+   Referencias de diseño: WebGazer (regresión ridge + recalibración),
+   GazeFollower (MediaPipe Iris + calibración), MPIIGaze (normalización por
+   pose de cabeza), MediaPipe Iris (landmarks 468-477).
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* La calibración cubre ±42 % del ancho y ±38 % del alto del área de juego:
+   el mismo marco donde se dibujan los puntos de calibración y el objetivo. */
+const ESC_X = 0.42, ESC_Y = 0.38;
+function proyectar(nx, ny){
+  return {
+    x: state.w / 2 + nx * (state.w * ESC_X),
+    y: state.h / 2 + ny * (state.h * ESC_Y)
+  };
+}
+
+/* Índices de la malla (478 puntos, los 10 últimos son el iris). */
+const EYE = {
+  R: { outer: 33, inner: 133, top: 159, bot: 145, iris: [468, 469, 470, 471, 472] },
+  L: { outer: 263, inner: 362, top: 386, bot: 374, iris: [473, 474, 475, 476, 477] }
+};
+const EAR_MIN = 0.13;      // debajo de esto el ojo está cerrado (parpadeo)
+const GAZE_FRESCA_MS = 400; // cuánto se sostiene la última mirada válida
+
+/* ---------- 5.1 Geometría del ojo ---------- */
+function sub3(a, b){ return { x: a.x - b.x, y: a.y - b.y, z: a.z - b.z }; }
+function dot3(a, b){ return a.x * b.x + a.y * b.y + a.z * b.z; }
+function norm3(a){
+  const n = Math.hypot(a.x, a.y, a.z) || 1;
+  return { x: a.x / n, y: a.y / n, z: a.z / n };
+}
+function dist3(a, b){ return Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z); }
+
+/* MediaPipe da x,y normalizados por ancho y alto, y z por el ancho. Se pasa
+   todo a píxeles (z incluido) para que el triedro sea geométricamente sano. */
+function ojoDesde(lm, cfg, W, H){
+  const P = i => {
+    const p = lm[i];
+    return p ? { x: p.x * W, y: p.y * H, z: (p.z || 0) * W } : null;
+  };
+  const outer = P(cfg.outer), inner = P(cfg.inner), top = P(cfg.top), bot = P(cfg.bot);
+  if(!outer || !inner || !top || !bot) return { ok: false, u: 0, v: 0, ear: 0 };
+
+  let ix = 0, iy = 0, iz = 0, n = 0;
+  for(const k of cfg.iris){
+    const p = P(k);
+    if(p){ ix += p.x; iy += p.y; iz += p.z; n++; }
+  }
+  if(!n) return { ok: false, u: 0, v: 0, ear: 0 };
+  const iris = { x: ix / n, y: iy / n, z: iz / n };
+
+  const mid = {
+    x: (outer.x + inner.x) / 2,
+    y: (outer.y + inner.y) / 2,
+    z: (outer.z + inner.z) / 2
+  };
+  /* Eje horizontal del ojo (comisura externa → interna) y vertical
+     (párpado inferior → superior), ortogonalizados entre sí. */
+  const ex = norm3(sub3(outer, inner));
+  const abajo = sub3(bot, top);
+  const ey = norm3({
+    x: abajo.x - ex.x * dot3(abajo, ex),
+    y: abajo.y - ex.y * dot3(abajo, ex),
+    z: abajo.z - ex.z * dot3(abajo, ex)
+  });
+  const ancho = dist3(outer, inner) || 1;
+  const alto = dist3(top, bot) || 1;
+  const d = sub3(iris, mid);
+
+  const u = dot3(d, ex) / ancho;   // desplazamiento del iris / ancho del ojo
+  const v = dot3(d, ey) / alto;    // desplazamiento vertical / alto del ojo
+  const ear = alto / ancho;        // apertura (parpadeo)
+  const ok = isFinite(u) && isFinite(v) && isFinite(ear) &&
+             ear > EAR_MIN && Math.abs(u) < 0.75 && Math.abs(v) < 1.1;
+  return { ok, u, v, ear, px: iris.x / W, py: iris.y / H };
+}
+
+function extraerOjos(lm){
+  const W = cam.videoWidth || 640, H = cam.videoHeight || 480;
+  return { R: ojoDesde(lm, EYE.R, W, H), L: ojoDesde(lm, EYE.L, W, H) };
+}
+
+/* Pose de cabeza desde la matriz 4x4 (column-major). Incluye traslación:
+   al acercarse o correrse de costado, la proyección del iris cambia y estos
+   términos lo compensan. */
+function poseDesdeMatriz(m){
+  const d = m.data;
+  return {
+    yaw: Math.atan2(d[2], d[10]) * 180 / Math.PI,
+    pitch: Math.atan2(-d[6], Math.hypot(d[2], d[10])) * 180 / Math.PI,
+    roll: Math.atan2(d[1], d[0]) * 180 / Math.PI,
+    tx: d[12] || 0, ty: d[13] || 0, tz: d[14] || 0
+  };
+}
+function poseDesdeNariz(lm){
+  const ancho = hypot(lm[234].x - lm[454].x, lm[234].y - lm[454].y) || 0.3;
+  const alto = hypot(lm[10].x - lm[152].x, lm[10].y - lm[152].y) || 0.4;
+  const cx = (lm[234].x + lm[454].x) / 2, cy = (lm[10].y + lm[152].y) / 2;
+  return {
+    yaw: ((lm[1].x - cx) / ancho) * 90,
+    pitch: ((lm[1].y - cy) / alto) * 90,
+    roll: 0, tx: 0, ty: 0, tz: 0
+  };
+}
+
+/* ---------- 5.2 Features y modelo ---------- */
+const FEAT_KEYS = ['uR', 'vR', 'uL', 'vL', 'yaw', 'pitch', 'roll', 'tx', 'ty', 'tz'];
+
+function vectorCrudo(o, h){
+  return {
+    uR: o.R.u, vR: o.R.v, uL: o.L.u, vL: o.L.v,
+    yaw: (h.yaw || 0) / 30, pitch: (h.pitch || 0) / 30, roll: (h.roll || 0) / 30,
+    tx: (h.tx || 0) / 10, ty: (h.ty || 0) / 10, tz: (h.tz || 0) / 10
+  };
+}
+/* Features optimizados para seguimiento con OJOS: iris + polinomios ligeros.
+   Si "solo ojos" está activo, se atenúa mucho la contribución de la cabeza
+   al permitir al CV elegir lambda mayor y recortando ese rango. */
+function vectorPara(v, modo){
+  const ojosSolo = !!(eyesOnlyChk && eyesOnlyChk.checked);
+  if(modo === 'R'){
+    const u = v.uR, wv = v.vR;
+    if(ojosSolo) return [u, wv, u*u, wv*wv, u*wv, 1];
+    return [u, wv, u*u, wv*wv, u*wv, v.yaw*0.25, v.pitch*0.25, v.tx*0.1, v.ty*0.1, 1];
+  }
+  if(modo === 'L'){
+    const u = v.uL, wv = v.vL;
+    if(ojosSolo) return [u, wv, u*u, wv*wv, u*wv, 1];
+    return [u, wv, u*u, wv*wv, u*wv, v.yaw*0.25, v.pitch*0.25, v.tx*0.1, v.ty*0.1, 1];
+  }
+  /* ambos ojos */
+  const uR = v.uR, vR = v.vR, uL = v.uL, vL = v.vL;
+  const um = (uR - uL) * 0.5;
+  const vm = (vR + vL) * 0.5;
+  if(ojosSolo) return [uR, vR, uL, vL, um, vm, uR*uR, vR*vR, uL*uL, vL*vL, uR*vR, uL*vL, 1];
+  return [uR, vR, uL, vL, um, vm, uR*uR, vR*vR, uL*uL, vL*vL, uR*vR, uL*vL,
+          v.yaw*0.25, v.pitch*0.25, v.roll*0.15, v.tx*0.08, v.ty*0.08, 1];
+}
+
+function dot(a, b){ let s = 0; for(let i = 0; i < a.length; i++) s += a[i] * b[i]; return s; }
+function media(a){ let s = 0; for(const v of a) s += v; return s / (a.length || 1); }
+function desvio(a){
+  if(a.length < 2) return 0;
+  const m = media(a);
+  let s = 0;
+  for(const v of a) s += (v - m) * (v - m);
+  return Math.sqrt(s / (a.length - 1));
+}
+function mediana(a){
+  if(!a.length) return 0;
+  const s = [...a].sort((x, y) => x - y);
+  const m = s.length >> 1;
+  return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+}
+
+/* Mínimos cuadrados por eliminación gaussiana (matriz chica, 11x11). */
+function resolverLineal(A, b){
+  const n = A.length;
+  const M = A.map((row, i) => [...row, b[i]]);
+  for(let col = 0; col < n; col++){
+    let piv = col;
+    for(let r = col + 1; r < n; r++) if(Math.abs(M[r][col]) > Math.abs(M[piv][col])) piv = r;
+    [M[col], M[piv]] = [M[piv], M[col]];
+    const p = M[col][col] || 1e-9;
+    for(let c = col; c <= n; c++) M[col][c] /= p;
+    for(let r = 0; r < n; r++){
+      if(r === col) continue;
+      const f = M[r][col];
+      for(let c = col; c <= n; c++) M[r][c] -= f * M[col][c];
+    }
+  }
+  return M.map(row => row[n]);
+}
+
+/* Ridge con estandarización: cada feature queda en media 0 / desvío 1, así
+   la penalización trata a todas por igual y yaw/pitch dejan de dominar.
+   Además se guarda el rango visto en calibración: en juego los valores se
+   recortan a ese rango (con margen), para que una pose nueva no extrapole el
+   modelo lineal a cualquier lado. */
+function ajustarRidge(X, y, lam){
+  const n = X[0].length;
+  const mu = new Array(n), sd = new Array(n), lo = new Array(n), hi = new Array(n);
+  for(let j = 0; j < n; j++){
+    const col = X.map(r => r[j]);
+    mu[j] = media(col);
+    sd[j] = Math.max(desvio(col), 1e-3);
+    const mn = Math.min(...col), mx = Math.max(...col);
+    const pad = Math.max((mx - mn) * 0.6, 1e-3);
+    lo[j] = mn - pad;
+    hi[j] = mx + pad;
+  }
+  const AtA = Array.from({ length: n + 1 }, () => new Array(n + 1).fill(0));
+  const Atb = new Array(n + 1).fill(0);
+  for(let i = 0; i < X.length; i++){
+    const z = X[i].map((v, j) => (v - mu[j]) / sd[j]);
+    z.push(1);
+    for(let r = 0; r <= n; r++){
+      Atb[r] += z[r] * y[i];
+      for(let c = 0; c <= n; c++) AtA[r][c] += z[r] * z[c];
+    }
+  }
+  const ojosSolo = !!(eyesOnlyChk && eyesOnlyChk.checked);
+  for(let j = 0; j < n; j++){
+    const extra = (ojosSolo && j >= 5) ? 0.5 : 0; // atenuar cabeza si solo ojos
+    AtA[j][j] += lam * (1 + extra);
+  }
+  // el sesgo no se penaliza
+  return { w: resolverLineal(AtA, Atb), mu, sd, lo, hi, n };
+}
+
+function predecirFila(mod, x){
+  let s = mod.w[mod.n];
+  for(let j = 0; j < x.length; j++){
+    const z = (clamp(x[j], mod.lo[j], mod.hi[j]) - mod.mu[j]) / mod.sd[j];
+    s += z * mod.w[j];
+  }
+  return s;
+}
+
+function predecirModelo(m, v, eje){
+  return predecirFila(m[eje], vectorPara(v, m.modo));
+}
+
+/* Error de validación cruzada para un lambda dado (en coords normalizadas). */
+function evaluarCV(X, tx, ty, folds, lam){
+  let ex = 0, ey = 0, total = 0;
+  for(let f = 0; f < folds; f++){
+    const tr = [], te = [];
+    for(let i = 0; i < X.length; i++) (i % folds === f ? te : tr).push(i);
+    if(tr.length < 4 || !te.length) continue;
+    const Xtr = tr.map(i => X[i]);
+    const mx = ajustarRidge(Xtr, tr.map(i => tx[i]), lam);
+    const my = ajustarRidge(Xtr, tr.map(i => ty[i]), lam);
+    for(const i of te){
+      const px = predecirFila(mx, X[i]);
+      const py = predecirFila(my, X[i]);
+      ex += (px - tx[i]) ** 2;
+      ey += (py - ty[i]) ** 2;
+      total++;
+    }
+  }
+  return total ? { ex: Math.sqrt(ex / total), ey: Math.sqrt(ey / total) } : null;
+}
+
+const LAMBDAS = [0.01, 0.03, 0.1, 0.3, 1, 3, 10, 30, 100];
+
+/* Entrena 3 modelos: los dos ojos juntos, solo derecho y solo izquierdo.
+   En juego se combinan según qué ojos estén disponibles. */
+function entrenarModelo(puntos, modo){
+  const filas = puntos.filter(p =>
+    modo === 'both' ? (p.o.R.ok && p.o.L.ok) :
+    modo === 'R'    ? p.o.R.ok : p.o.L.ok);
+  if(filas.length < 6) return null;
+
+  const X = filas.map(p => vectorPara(vectorCrudo(p.o, p.head), modo));
+  const tx = filas.map(p => p.nx);
+  const ty = filas.map(p => p.ny);
+  const folds = Math.min(8, Math.max(3, Math.floor(filas.length / 4)));
+
+  let mejor = null;
+  for(const lam of LAMBDAS){
+    const e = evaluarCV(X, tx, ty, folds, lam);
+    if(!e) continue;
+    const score = e.ex + e.ey;
+    if(!mejor || score < mejor.score) mejor = { lam, e, score };
+  }
+  if(!mejor) return null;
+
+  const mx = ajustarRidge(X, tx, mejor.lam);
+  const my = ajustarRidge(X, ty, mejor.lam);
+  const errPx = Math.hypot(mejor.e.ex * state.w * ESC_X, mejor.e.ey * state.h * ESC_Y);
+  return { modo, mx, my, lam: mejor.lam, errPx, n: filas.length, cvEx: mejor.e.ex, cvEy: mejor.e.ey };
+}
+
+function predecirCrudo(o, h){
+  const M = state.calib.models;
+  if(!M) return null;
+  const v = vectorCrudo(o, h);
+  const cand = [];
+  if(o.R.ok && o.L.ok && M.both) cand.push(M.both);
+  if(o.R.ok && M.R) cand.push(M.R);
+  if(o.L.ok && M.L) cand.push(M.L);
+  if(!cand.length) return null;
+
+  /* Ponderación por error CV + consistencia entre ojos. */
+  let sx = 0, sy = 0, sw = 0;
+  for(const m of cand){
+    const w = 1 / ((m.errPx * m.errPx) + 80);
+    sx += predecirModelo(m, v, 'mx') * w;
+    sy += predecirModelo(m, v, 'my') * w;
+    sw += w;
+  }
+  let nx = sx / sw, ny = sy / sw;
+
+  /* Si ambos ojos disponibles y hay modelos por ojo, corregir sesgo por
+     inconsistencia (ayuda cuando un ojo tiene peor pista). */
+  if(o.R.ok && o.L.ok && M.R && M.L){
+    const prR = {x: predecirModelo(M.R, v, 'mx'), y: predecirModelo(M.R, v, 'my')};
+    const prL = {x: predecirModelo(M.L, v, 'mx'), y: predecirModelo(M.L, v, 'my')};
+    const dx = prR.x - prL.x, dy = prR.y - prL.y;
+    const d = Math.hypot(dx, dy);
+    if(d < 0.25){
+      nx = nx * 0.6 + ((prR.x + prL.x) / 2) * 0.4;
+      ny = ny * 0.6 + ((prR.y + prL.y) / 2) * 0.4;
+    }
+  }
+  return { nx, ny, n: cand.length };
+}
+
+/* Filtro One Euro: más estable para mirada fija, responde bien a sacadas. */
+class OneEuro{
+  constructor(minCutoff = 0.8, beta = 0.006, dCutoff = 1.0){
+    this.minCutoff = minCutoff; this.beta = beta; this.dCutoff = dCutoff;
+    this.xPrev = null; this.dxPrev = 0; this.tPrev = null;
+  }
+  static alpha(cutoff, dt){ const tau = 1 / (2 * Math.PI * cutoff); return 1 / (1 + tau / dt); }
+  filter(x, tMs){
+    if(this.tPrev === null){ this.tPrev = tMs; this.xPrev = x; return x; }
+    const dt = Math.max((tMs - this.tPrev) / 1000, 1e-3);
+    const dx = (x - this.xPrev) / dt;
+    const aD = OneEuro.alpha(this.dCutoff, dt);
+    const dxHat = aD * dx + (1 - aD) * this.dxPrev;
+    const a = OneEuro.alpha(this.minCutoff + this.beta * Math.abs(dxHat), dt);
+    const xHat = a * x + (1 - a) * this.xPrev;
+    this.xPrev = xHat; this.dxPrev = dxHat; this.tPrev = tMs;
+    return xHat;
+  }
+  reset(){ this.xPrev = null; this.dxPrev = 0; this.tPrev = null; }
+}
+const fX = new OneEuro(0.7, 0.005), fY = new OneEuro(0.7, 0.005);
+
+/* ---------- 5.3 Un cuadro de cámara ---------- */
+function procesarMirada(ojos, head, now){
+  if(!state.calib.done || !state.calib.models) return;
+  if(state.calibrating || state.recentering) return;
+
+  const pr = predecirCrudo(ojos, head);
+  if(!pr){ state.gazeValid = false; return; }
+
+  const nx = clamp(pr.nx + state.calib.bias.x, -1.4, 1.4);
+  const ny = clamp(pr.ny + state.calib.bias.y, -1.4, 1.4);
+  const sx = fX.filter(nx, now);
+  const sy = fY.filter(ny, now);
+  state.gazeScreen = proyectar(sx, sy);
+  state.gazeValid = true;
+  state.gazeConf = pr.n;
+  state.lastGaze = now;
+}
+
+function detectar(now){
+  if(state.pointer) return;
+  if(!state.lm || cam.readyState < 2 || !cam.videoWidth) return;
+  if(cam.currentTime === state.lastVideoTime) return;
+  state.lastVideoTime = cam.currentTime;
+
+  const t0 = performance.now();
+  let res;
+  try{ res = state.lm.detectForVideo(cam, now); }
+  catch(e){ console.warn('[ojo] detect:', e); return; }
+  state.detMs = performance.now() - t0;
+  state.detCount++;
+
+  const lm = res.faceLandmarks?.[0];
+  dibujarCamara(lm);
+  if(!lm) return;
+
+  state.lastFace = now;
+  const ojos = extraerOjos(lm);
+  const head = res.facialTransformationMatrixes?.length
+    ? poseDesdeMatriz(res.facialTransformationMatrixes[0])
+    : poseDesdeNariz(lm);
+  state.eye = ojos;
+  state.head = head;
+  state.raw = { ojos, head };
+  procesarMirada(ojos, head, now);
+}
+
+function dibujarCamara(lm){
+  const w = camOverlay.width, h = camOverlay.height;
+  if(!w || !h) return;
+  octx.clearRect(0, 0, w, h);
+  if(!lm) return;
+  for(const [lado, cfg] of [['R', EYE.R], ['L', EYE.L]]){
+    const abierto = state.eye ? state.eye[lado].ok : false;
+    octx.fillStyle = abierto ? '#3fb6a8' : '#d4655a';
+    for(const i of cfg.iris){
+      const p = lm[i];
+      if(!p) continue;
+      octx.beginPath();
+      octx.arc(p.x * w, p.y * h, Math.max(1.5, w / 70), 0, Math.PI * 2);
+      octx.fill();
+    }
+  }
+}
+
+/* ---------- 6. Calibración robusta + recentrado ---------- */
+const CAL_PUNTOS_9 = [[-1, 0, 1], [-1, 0, 1]];
+function puntosCalibracion(){
+  const n = +(calSel?.value || 16);
+  let vals;
+  if(n === 9) vals = [-1, 0, 1];
+  else if(n === 16) vals = [-1, -1 / 3, 1 / 3, 1];
+  else { // 25 - 5x5
+    vals = [-1, -0.5, 0, 0.5, 1];
+  }
+  const pts = [];
+  for(const ny of vals) for(const nx of vals) pts.push({ nx, ny });
+  /* De adentro hacia afuera: los primeros puntos son los más estables. */
+  return pts.sort((a, b) =>
+    (Math.abs(a.nx) + Math.abs(a.ny)) - (Math.abs(b.nx) + Math.abs(b.ny)));
+}
+
+/* Junta cuadros durante `ms`. Guarda SOLO datos crudos del ojo: el vector de
+   features se arma al entrenar, así se puede filtrar por ojo disponible. */
+function capturarPunto(ms){
+  return new Promise(resolve => {
+    const out = [];
+    const t0 = performance.now();
+    const iv = setInterval(() => {
+      const now = performance.now();
+      if(state.eye && (now - state.lastFace) < 350){
+        /* Solo aceptar ojos abiertos y con valores razonables */
+        const oR = state.eye.R, oL = state.eye.L;
+        if((oR.ok || oL.ok) && (oR.ear > 0.16 || oL.ear > 0.16)){
+          out.push({
+            o: { R: { ...state.eye.R }, L: { ...state.eye.L } },
+            head: { ...state.head }
+          });
+        }
+      }
+      state.calProg = clamp((now - t0) / ms, 0, 1);
+      if(now - t0 >= ms){ clearInterval(iv); resolve(out); }
+    }, 33);
+  });
+}
+
+/* Mediana robusta (MAD-like): descarta outliers extremos para limpiar parpadeos. */
+function medianaRobusta(arr){
+  if(!arr.length) return 0;
+  const med = mediana(arr);
+  const desv = arr.map(x => Math.abs(x - med)).sort((a,b)=>a-b);
+  const mad = (desv[desv.length>>1] || 1e-6) * 1.4826;
+  const lim = Math.max(mad * 3, 0.01);
+  const filt = arr.filter(x => Math.abs(x - med) <= lim);
+  return mediana(filt.length ? filt : arr);
+}
+
+function medianaMuestras(muestras){
+  if(!muestras.length) return null;
+  const h = {};
+  for(const k of ['yaw', 'pitch', 'roll', 'tx', 'ty', 'tz'])
+    h[k] = medianaRobusta(muestras.map(s => s.head[k] || 0));
+
+  const o = {
+    R: { ok: false, u: 0, v: 0, ear: 0 },
+    L: { ok: false, u: 0, v: 0, ear: 0 }
+  };
+  for(const e of ['R', 'L']){
+    const ss = muestras.filter(s => s.o[e].ok);
+    if(ss.length >= 5){
+      o[e] = {
+        ok: true,
+        u: medianaRobusta(ss.map(s => s.o[e].u)),
+        v: medianaRobusta(ss.map(s => s.o[e].v)),
+        ear: medianaRobusta(ss.map(s => s.o[e].ear))
+      };
+    }
+  }
+  if(!o.R.ok && !o.L.ok) return null;
+  return { o, head: h };
+}
+
+function liberarBotonesCalib(habilitar){
+  btnStart.disabled = !habilitar;
+  btnCal.disabled = !habilitar;
+  btnPause.disabled = !habilitar;
+  if(btnCenter) btnCenter.disabled = !habilitar || !state.calib.done;
+}
+
+async function calibrar(){
+  if(state.calibrating) return;
+  if(!state.ready) return;
+  if(state.pointer){
+    state.calib.done = true;
+    statusEl.textContent = 'Modo puntero: no hace falta calibrar.';
+    return;
+  }
+  if(performance.now() - state.lastFace > 500){
+    showError('No se ve la cara. Acercate, mejorá la luz y volvé a probar.');
+    return;
+  }
+
+  state.calibrating = true;
+  state.phase = 'idle';
+  state.calProg = 0;
+  const sesion = ++state.calSesion;
+  liberarBotonesCalib(false);
+  btnStop.disabled = false;
+  fX.reset(); fY.reset();
+
+  const pts = puntosCalibracion();
+  const capturados = [];
+
+  const abortado = () => sesion !== state.calSesion || !state.running;
+  const abortar = () => {
+    state.calibrating = false;
+    state.calTarget = null;
+    state.calProg = 0;
+    calibHint.style.display = 'none';
+  };
+
+  for(let i = 0; i < pts.length; i++){
+    if(abortado()){ abortar(); return; }
+    const p = pts[i];
+    state.calTarget = p;
+    state.calProg = 0;
+    calibHint.style.display = 'block';
+    calibHint.textContent = `Punto ${i + 1}/${pts.length} — miralo fijo, sin mover la cabeza`;
+    await sleep(500);                       // deja terminar la sacada
+    const muestras = await capturarPunto(850); // más muestras para mayor precisión
+    if(abortado()){ abortar(); return; }
+    const med = medianaMuestras(muestras);
+    if(med && med.o.R.ok && med.o.L.ok) capturados.push({ ...med, nx: p.nx, ny: p.ny }); // prioriza ambos ojos
+    else if(med) capturados.push({ ...med, nx: p.nx, ny: p.ny });
+  }
+
+  if(abortado()){ abortar(); return; }
+  state.calTarget = null;
+  state.calProg = 0;
+  calibHint.style.display = 'none';
+  state.calibrating = false;
+
+  if(capturados.length < 6){
+    liberarBotonesCalib(true);
+    showError(`Solo se capturaron ${capturados.length} de ${pts.length} puntos. Mejorá la luz, acercate un poco y repetí la calibración.`);
+    statusEl.textContent = 'Calibración incompleta.';
+    return;
+  }
+
+  const M = {
+    both: entrenarModelo(capturados, 'both'),
+    R: entrenarModelo(capturados, 'R'),
+    L: entrenarModelo(capturados, 'L')
+  };
+  const modelos = [M.both, M.R, M.L].filter(Boolean);
+
+  if(!modelos.length){
+    liberarBotonesCalib(true);
+    showError('No se pudo ajustar el modelo. Probá con más luz y los dos ojos bien visibles.');
+    statusEl.textContent = 'Error de calibración.';
+    return;
+  }
+
+  const errPx = Math.min(...modelos.map(m => m.errPx));
+  state.calib = {
+    done: true, models: M, errPx,
+    n: capturados.length,
+    bias: { x: 0, y: 0 },
+    lam: (modelos.find(m => m.errPx === errPx) || modelos[0]).lam
+  };
+  fX.reset(); fY.reset();
+  state.gazeValid = false;
+  liberarBotonesCalib(true);
+  btnCenter.disabled = false;
+
+  const ojosSolo = !!(eyesOnlyChk && eyesOnlyChk.checked);
+  const q = errPx <= state.tolPx * 0.45 ? 'excelente'
+          : errPx <= state.tolPx * 0.8 ? 'aceptable' : 'floja';
+  statusEl.textContent =
+    `Calibrado con ${capturados.length} puntos · error ≈ ${Math.round(errPx)} px (${q})${ojosSolo ? ' · modo solo-ojos' : ''}. Preparate…`;
+
+  if(q === 'floja'){
+    showError(`La calibración quedó floja (error ≈ ${Math.round(errPx)} px, el área de acierto es ${Math.round(state.tolPx)} px). ` +
+      'Repetila con MEJOR LUZ FRONTAL, cámara a nivel de ojos, cabeza quieta y mirando cada punto hasta que se llene el anillo. Usá modo Ultra preciso (25 puntos).');
+  }
+  prepararRonda();
+}
+
+/* Recentrar: corrige la deriva (la persona se acomoda en la silla) sin repetir
+   toda la calibración. Mide dónde cree que mirás cuando mirás el centro y
+   resta ese sesgo. Es la recalibración rápida que usa WebGazer con los clics. */
+async function recentrar(){
+  if(state.recentering || state.calibrating) return;
+  if(!state.calib.done || state.pointer) return;
+  if(performance.now() - state.lastFace > 500){
+    showError('No se ve la cara. Acercate y volvé a intentar.');
+    return;
+  }
+
+  state.recentering = true;
+  state.calProg = 0;
+  const sesion = ++state.calSesion;
+  calibHint.style.display = 'block';
+  calibHint.textContent = 'Recentrando: mirá el CENTRO con los dos ojos, cabeza quieta';
+  statusEl.textContent = 'Recentrando…';
+  await sleep(500);
+
+  const muestras = await capturarPunto(1100);
+  if(sesion !== state.calSesion || !state.running){
+    state.recentering = false;
+    state.calProg = 0;
+    calibHint.style.display = 'none';
+    return;
+  }
+  const preds = [];
+  for(const s of muestras){
+    const pr = predecirCrudo(s.o, s.head);
+    if(pr) preds.push(pr);
+  }
+
+  state.recentering = false;
+  state.calProg = 0;
+  calibHint.style.display = 'none';
+
+  if(preds.length < 8){
+    showError('No se pudo recentrar: necesitás más cuadros con ambos ojos abiertos.');
+    statusEl.textContent = 'Recentrado cancelado.';
+    return;
+  }
+
+  const bx = medianaRobusta(preds.map(p => p.nx));
+  const by = medianaRobusta(preds.map(p => p.ny));
+  /* Suavizar corrección para evitar saltos exagerados */
+  state.calib.bias.x = state.calib.bias.x * 0.3 + (-bx) * 0.7;
+  state.calib.bias.y = state.calib.bias.y * 0.3 + (-by) * 0.7;
+  fX.reset(); fY.reset();
+
+  const dx = Math.round(state.calib.bias.x * state.w * ESC_X);
+  const dy = Math.round(state.calib.bias.y * state.h * ESC_Y);
+  statusEl.textContent = `Recentrado (corrección ${dx >= 0 ? '+' : ''}${dx} px, ${dy >= 0 ? '+' : ''}${dy} px).`;
+  if(state.phase === 'playing') return;
+  prepararRonda();
+}
+
+
+/* ---------- 7. El recorrido del punto ---------- */
+/* El punto no se mueve con una fórmula suelta: se mueve entre waypoints con
+   velocidad constante en píxeles por segundo, así el estímulo es parejo en
+   cualquier pantalla. Las posiciones se guardan normalizadas (-1..1) y se
+   proyectan a píxeles en cada cuadro, de modo que rotar el teléfono o cambiar
+   el tamaño del área no rompe la ronda. */
+const Path = {
+  type: 'ping', pts: [], idx: 0, dir: 1,
+  posN: { x: 0, y: 0 }, goalN: { x: 0, y: 0 },
+  phase: 0, dwell: 0, dwellMs: 0.10,
+
+  set(shape){
+    this.idx = 0; this.dir = 1; this.phase = 0; this.dwell = 0;
+    const P = (x, y) => ({ x, y });
+    const centro = P(0, 0);
+
+    switch(shape){
+      case 'h':
+        this.type = 'ping'; this.pts = [P(-1, 0), P(1, 0)];
+        break;
+      case 'v':
+        this.type = 'ping'; this.pts = [P(0, -1), P(0, 1)];
+        break;
+      case 'cross':
+        this.type = 'cycle';
+        this.pts = [centro, P(1, 0), centro, P(0, 1), centro, P(-1, 0), centro, P(0, -1), centro];
+        break;
+      case 'star': {
+        this.type = 'cycle';
+        this.pts = [centro];
+        for(let k = 0; k < 8; k++){
+          const a = k * Math.PI / 4;
+          this.pts.push(P(Math.cos(a), Math.sin(a)), centro);
+        }
+        break;
+      }
+      case 'circle':
+        this.type = 'param'; this.kind = 'circle'; this.pts = [];
+        break;
+      case 'eight':
+        this.type = 'param'; this.kind = 'eight'; this.pts = [];
+        break;
+      default:
+        this.type = 'random'; this.pts = [];
+    }
+
+    if(this.type === 'ping'){ this.posN = { ...this.pts[0] }; this.goalN = { ...this.pts[1] }; }
+    else if(this.type === 'cycle'){ this.posN = { ...this.pts[0] }; this.goalN = { ...this.pts[1] }; }
+    else { this.posN = { ...centro }; this.goalN = { ...centro }; }
+  },
+
+  /* Punto paramétrico normalizado para círculo y ocho. */
+  param(t){
+    const a = t * Math.PI * 2;
+    if(this.kind === 'circle'){
+      return { x: Math.cos(a), y: Math.sin(a) };
+    }
+    return { x: Math.sin(a), y: Math.sin(2 * a) * 0.85 };
+  },
+
+  perimetro(b){
+    let s = 0, prev = null;
+    for(let i = 0; i <= 48; i++){
+      const n = this.param(i / 48);
+      const p = { x: b.cx + n.x * b.ax, y: b.cy + n.y * b.ay };
+      if(prev) s += hypot(p.x - prev.x, p.y - prev.y);
+      prev = p;
+    }
+    return Math.max(1, s);
+  },
+
+  siguiente(){
+    if(this.type === 'ping'){
+      this.dir *= -1;
+      this.goalN = { ...this.pts[this.dir > 0 ? 1 : 0] };
+      this.dwell = 0;
+    }else if(this.type === 'cycle'){
+      this.idx = (this.idx + 1) % this.pts.length;
+      this.goalN = { ...this.pts[this.idx] };
+      this.dwell = this.dwellMs;
+    }else{
+      this.goalN = { x: rand(-1, 1), y: rand(-1, 1) };
+      this.dwell = 0.10;
+    }
+  },
+
+  /* Devuelve {x, y, vx, vy} en px CSS y px/s. */
+  update(dt, vPx, b){
+    const toPx = n => ({ x: b.cx + n.x * b.ax, y: b.cy + n.y * b.ay });
+    const toN = p => ({ x: b.ax ? (p.x - b.cx) / b.ax : 0, y: b.ay ? (p.y - b.cy) / b.ay : 0 });
+    const pos = toPx(this.posN);
+
+    if(this.type === 'param'){
+      this.phase = (this.phase + (vPx * dt) / this.perimetro(b)) % 1;
+      const n = this.param(this.phase);
+      const p = toPx(n);
+      this.posN = n;
+      return { x: p.x, y: p.y, vx: (p.x - pos.x) / Math.max(dt, 1e-4), vy: (p.y - pos.y) / Math.max(dt, 1e-4) };
+    }
+
+    if(this.dwell > 0){
+      this.dwell -= dt;
+      return { x: pos.x, y: pos.y, vx: 0, vy: 0 };
+    }
+
+    const goal = toPx(this.goalN);
+    const dx = goal.x - pos.x, dy = goal.y - pos.y;
+    const dist = hypot(dx, dy);
+    const step = vPx * dt;
+
+    if(dist <= step || dist < 0.5){
+      const p = toPx(this.goalN);
+      this.posN = { ...this.goalN };
+      this.siguiente();
+      return { x: p.x, y: p.y, vx: (dx / Math.max(dt, 1e-4)), vy: (dy / Math.max(dt, 1e-4)) };
+    }
+
+    const k = step / dist;
+    const np = { x: pos.x + dx * k, y: pos.y + dy * k };
+    this.posN = toN(np);
+    return { x: np.x, y: np.y, vx: (dx / dist) * vPx, vy: (dy / dist) * vPx };
+  }
+};
+
+/* Área donde el punto puede moverse: queda siempre entera en pantalla,
+   aunque el área de acierto sea grande. */
+function limites(){
+  const pad = 14, tol = state.tolPx;
+  return {
+    cx: state.w / 2,
+    cy: state.h / 2,
+    ax: Math.max(24, state.w / 2 - tol - pad),
+    ay: Math.max(24, state.h / 2 - tol - pad)
+  };
+}
+
+/* ---------- 8. La ronda ---------- */
+/* En el modo mixto el recorrido cambia solo cada 8 s: así el estímulo pasa
+   por direcciones distintas sin que nadie tenga que tocar la configuración. */
+const MIX = ['cross', 'circle', 'h', 'star', 'v', 'eight'];
+function setRecorrido(shape){
+  state.subShape = shape === 'mixto' ? MIX[state.mixIdx % MIX.length] : shape;
+  Path.set(state.subShape);
+}
+
+function prepararRonda(){
+  state.shape = modeSel.value;
+  state.tolPx = +tolRange.value;
+  state.speedFactor = +speedRange.value / 100;
+  state.roundLen = +durSel.value;
+  state.roundLeft = state.roundLen || 0;
+
+  state.score = 0;
+  state.insideMs = 0;
+  state.totalMs = 0;
+  state.lostMs = 0;
+  state.bestRun = 0;
+  state.insideRun = 0;
+  state.outsideRun = 0;
+  state.elapsed = 0;
+  state.rampAcc = 0;
+  state.dirNow = -1;
+  state.dirStats = Array.from({ length: 8 }, () => ({ in: 0, total: 0 }));
+  state.trail = [];
+  state.dist = 0;
+  state.inside = false;
+  state.countdown = 3;
+  state.mixIdx = 0;
+  state.mixT = 0;
+
+  setRecorrido(state.shape);
+  const b = limites();
+  const p = Path.update(0, 0, b);
+  state.target = { x: p.x, y: p.y };
+  state.prevTarget = { ...state.target };
+
+  state.phase = 'playing';
+  state.paused = false;
+  results.classList.remove('show');
+  overlay.classList.remove('show');
+  btnPause.disabled = false;
+  btnPause.textContent = 'Pausa';
+  btnStop.disabled = false;
+  btnCal.disabled = false;
+  $('settings').open = false;
+  statusEl.textContent = 'Preparate…';
+  audio.ensure(); audio.resume(); audio.alarmOff();
+}
+
+function actualizarJuego(dt, now){
+  /* Cuenta regresiva: el punto ya está quieto en el centro esperando. */
+  if(state.countdown > 0){
+    state.countdown -= dt;
+    if(state.countdown <= 0){ state.countdown = 0; statusEl.textContent = '¡Dale!'; }
+    return;
+  }
+
+  const b = limites();
+  const vPx = state.speedFactor * Math.min(state.w, state.h);
+
+  /* Modo mixto: cada 8 s cambia de figura. */
+  if(state.shape === 'mixto'){
+    state.mixT += dt;
+    if(state.mixT >= 8){
+      state.mixT = 0;
+      state.mixIdx = (state.mixIdx + 1) % MIX.length;
+      setRecorrido('mixto');
+    }
+  }
+
+  const p = Path.update(dt, vPx, b);
+
+  state.prevTarget = { ...state.target };
+  state.target = { x: p.x, y: p.y };
+
+  const bin = dirBin(p.vx, p.vy);
+  if(bin >= 0) state.dirNow = bin;
+
+  const tol = state.tolPx;
+  const g = state.gazeScreen;
+  state.dist = hypot(g.x - p.x, g.y - p.y);
+
+  /* Histéresis: entrar exige estar dentro del área; salir exige pasarse un
+     12 % más. Sin esto, un borde tembloroso haría sonar la alarma a cada
+     cuadro y el juego sería insoportable. */
+  state.inside = state.inside ? state.dist <= tol * 1.12 : state.dist <= tol;
+
+  /* Mirada válida = cuadro reciente (tolera parpadeos) y calibración hecha. */
+  state.trackValid = state.pointer || (now - state.lastGaze) < GAZE_FRESCA_MS;
+  const valido = state.trackValid && (state.calib.done || state.pointer);
+
+  state.elapsed += dt;
+  if(state.roundLen) state.roundLeft -= dt;
+
+  if(valido){
+    state.totalMs += dt;
+    const ds = state.dirStats[state.dirNow >= 0 ? state.dirNow : 0];
+    ds.total += dt;
+
+    if(state.inside){
+      state.insideMs += dt;
+      ds.in += dt;
+      state.insideRun += dt;
+      state.bestRun = Math.max(state.bestRun, state.insideRun);
+
+      /* Multiplicador por racha: premia sostener la fijación, no acertar
+         un cuadro suelto. Tope ×3. */
+      const mult = 1 + Math.min(2, Math.max(0, state.insideRun - 0.8) * 0.45);
+      const bonus = state.dist < tol * 0.4 ? 1.5 : 1;
+      state.score += dt * 100 * mult * bonus;
+    }else{
+      state.insideRun = 0;
+    }
+  }else{
+    state.lostMs += dt;
+  }
+
+  /* Rastro de la mirada (400 ms), para ver la forma del seguimiento. */
+  state.trail.push({ x: g.x, y: g.y, t: now });
+  while(state.trail.length && now - state.trail[0].t > 400) state.trail.shift();
+
+  /* Subida automática de dificultad. */
+  if(rampChk.checked){
+    state.rampAcc += dt;
+    if(state.rampAcc >= 10){
+      state.rampAcc -= 10;
+      state.speedFactor = Math.min(1.10, state.speedFactor + 0.04);
+      speedRange.value = Math.round(state.speedFactor * 100);
+      speedShow.textContent = '×' + state.speedFactor.toFixed(2).replace('.', ',');
+    }
+  }
+
+  if(state.roundLen && state.roundLeft <= 0) terminarRonda();
+}
+
+/* La alarma solo suena si hay mirada válida: si se perdió la cara, el
+   "fuera del área" sería un dato falso y sonaría sin motivo. */
+function actualizarAlarma(dtActivo){
+  const activa = state.phase === 'playing' && !state.paused && dtActivo > 0 &&
+                 state.trackValid && (state.calib.done || state.pointer) &&
+                 state.countdown <= 0;
+
+  if(!activa || state.inside){
+    state.outsideRun = 0;
+    audio.alarmOff();
+  }else{
+    state.outsideRun += dtActivo;
+    if(state.outsideRun > 0.15){
+      const sev = clamp((state.dist - state.tolPx) / (state.tolPx * 4), 0, 1);
+      audio.alarmTick(performance.now(), sev);
+    }
+  }
+
+  /* Tono guía: sube de tono al acercarse al punto; se apaga al salir. */
+  if(guideChk.checked && activa && state.inside){
+    const prox = clamp(1 - state.dist / (state.tolPx * 2), 0, 1);
+    audio.guide(360 + 420 * prox, 0.028 + 0.022 * prox);
+  }else{
+    audio.guideOff();
+  }
+}
+
+function terminarRonda(){
+  state.phase = 'results';
+  state.paused = false;
+  audio.alarmOff(); audio.guideOff();
+
+  const pct = state.totalMs > 0 ? state.insideMs / state.totalMs : 0;
+  audio.chime(pct >= 0.6);
+  mostrarResultados();
+}
+
+
+/* ---------- 9. Dibujo ---------- */
+function ajustarLienzo(){
+  const dpr = DPR();
+  const w = mainEl.clientWidth, h = mainEl.clientHeight;
+  state.w = w; state.h = h;
+  stage.width = Math.round(w * dpr);
+  stage.height = Math.round(h * dpr);
+  sctx.setTransform(dpr, 0, 0, dpr, 0, 0);   // a partir de acá se dibuja en px CSS
+
+  const cw = camOverlay.clientWidth, ch = camOverlay.clientHeight;
+  camOverlay.width = Math.round(cw * dpr);
+  camOverlay.height = Math.round(ch * dpr);
+}
+new ResizeObserver(ajustarLienzo).observe(mainEl);
+window.addEventListener('resize', ajustarLienzo);
+window.addEventListener('orientationchange', () => setTimeout(ajustarLienzo, 250));
+
+function dibujar(now){
+  const w = state.w, h = state.h;
+  sctx.clearRect(0, 0, w, h);
+
+  if(state.calibrating){ dibujarCalibracion(); return; }
+  if(state.recentering){ dibujarRecentrar(); return; }
+  if(state.phase === 'idle'){ dibujarReposo(now); return; }
+
+  dibujarObjetivo(now);
+  if(state.countdown > 0) dibujarCuenta();
+  else if(state.calib.done || state.pointer) dibujarMirada(now);
+}
+
+/* Punto chico para mostrar dónde cree el sistema que estás mirando. */
+function puntoMirada(x, y, col){
+  sctx.save();
+  sctx.beginPath(); sctx.arc(x, y, 12, 0, Math.PI * 2);
+  sctx.fillStyle = 'rgba(63,182,168,.12)'; sctx.fill();
+  sctx.beginPath(); sctx.arc(x, y, 5.5, 0, Math.PI * 2);
+  sctx.fillStyle = col; sctx.fill();
+  sctx.beginPath();
+  sctx.moveTo(x - 13, y); sctx.lineTo(x - 7, y);
+  sctx.moveTo(x + 7, y);  sctx.lineTo(x + 13, y);
+  sctx.moveTo(x, y - 13); sctx.lineTo(x, y - 7);
+  sctx.moveTo(x, y + 7);  sctx.lineTo(x, y + 13);
+  sctx.strokeStyle = col; sctx.lineWidth = 1.5;
+  sctx.stroke();
+  sctx.restore();
+}
+
+function dibujarReposo(now){
+  const { w, h } = state;
+  const verMirada = !state.pointer && state.calib.done && gazeChk.checked &&
+                    state.gazeValid && (now - state.lastGaze) < 600;
+
+  if(verMirada) puntoMirada(state.gazeScreen.x, state.gazeScreen.y, '#3fb6a8');
+
+  sctx.save();
+  sctx.fillStyle = 'rgba(147,161,184,.55)';
+  sctx.font = '600 15px -apple-system,system-ui,sans-serif';
+  sctx.textAlign = 'center';
+  sctx.textBaseline = 'middle';
+  if(verMirada){
+    sctx.font = '500 12px -apple-system,system-ui,sans-serif';
+    sctx.fillStyle = 'rgba(147,161,184,.5)';
+    sctx.fillText('la cruz verde es la mirada estimada', w / 2, h / 2 + 34);
+  }
+  sctx.font = '600 15px -apple-system,system-ui,sans-serif';
+  sctx.fillStyle = 'rgba(147,161,184,.55)';
+  const msg = state.ready
+    ? (state.calib.done ? 'Listo. Pulsá «Otra ronda» para empezar.' : 'Pulsá «Calibrar» y mirá los puntos.')
+    : 'Pulsá «Iniciar» para encender la cámara.';
+  sctx.fillText(msg, w / 2, h / 2 + 8);
+  sctx.restore();
+}
+
+function dibujarCalibracion(){
+  const { w, h } = state, p = state.calTarget;
+  sctx.save();
+  sctx.fillStyle = 'rgba(11,18,32,.72)';
+  sctx.fillRect(0, 0, w, h);
+
+  if(p){
+    const { x, y } = proyectar(p.nx, p.ny);
+    sctx.beginPath(); sctx.arc(x, y, 30, 0, Math.PI * 2);
+    sctx.fillStyle = 'rgba(224,165,63,.14)'; sctx.fill();
+    sctx.beginPath(); sctx.arc(x, y, 15, 0, Math.PI * 2);
+    sctx.fillStyle = '#e0a53f'; sctx.fill();
+    sctx.beginPath(); sctx.arc(x, y, 5, 0, Math.PI * 2);
+    sctx.fillStyle = '#0b1220'; sctx.fill();
+
+    /* Anillo que se completa mientras se capturan los cuadros del punto. */
+    if(state.calProg > 0){
+      sctx.beginPath();
+      sctx.arc(x, y, 38, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * state.calProg);
+      sctx.strokeStyle = 'rgba(224,165,63,.85)';
+      sctx.lineWidth = 4;
+      sctx.stroke();
+    }
+  }
+  sctx.restore();
+}
+
+function dibujarRecentrar(){
+  const { w, h } = state;
+  sctx.save();
+  sctx.fillStyle = 'rgba(11,18,32,.78)';
+  sctx.fillRect(0, 0, w, h);
+  const x = w / 2, y = h / 2;
+  sctx.beginPath(); sctx.arc(x, y, 30, 0, Math.PI * 2);
+  sctx.fillStyle = 'rgba(224,165,63,.16)'; sctx.fill();
+  sctx.beginPath(); sctx.arc(x, y, 13, 0, Math.PI * 2);
+  sctx.fillStyle = '#e0a53f'; sctx.fill();
+  sctx.beginPath();
+  sctx.arc(x, y, 38, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * state.calProg);
+  sctx.strokeStyle = 'rgba(224,165,63,.9)';
+  sctx.lineWidth = 4;
+  sctx.stroke();
+  sctx.fillStyle = 'rgba(233,237,244,.8)';
+  sctx.font = '600 15px -apple-system,system-ui,sans-serif';
+  sctx.textAlign = 'center';
+  sctx.fillText('Mirá el punto del centro', x, y + 74);
+  sctx.restore();
+}
+
+function dibujarObjetivo(now){
+  const { target: t, tolPx: tol, inside } = state;
+  const col = inside ? '#3fb6a8' : '#d4655a';
+
+  sctx.save();
+
+  /* Área de acierto: disco tenue + borde punteado. */
+  sctx.beginPath(); sctx.arc(t.x, t.y, tol, 0, Math.PI * 2);
+  sctx.fillStyle = inside ? 'rgba(63,182,168,.10)' : 'rgba(212,101,90,.09)';
+  sctx.fill();
+  sctx.setLineDash([7, 6]);
+  sctx.lineWidth = 2;
+  sctx.strokeStyle = col;
+  sctx.stroke();
+  sctx.setLineDash([]);
+
+  /* Zona dulce (bonus ×1,5). */
+  sctx.beginPath(); sctx.arc(t.x, t.y, tol * 0.4, 0, Math.PI * 2);
+  sctx.fillStyle = 'rgba(233,237,244,.07)';
+  sctx.fill();
+
+  /* Núcleo del objetivo: pulso lento para que el ojo lo enganche. */
+  const pulse = 1 + 0.06 * Math.sin(now / 240);
+  sctx.beginPath(); sctx.arc(t.x, t.y, 9 * pulse, 0, Math.PI * 2);
+  sctx.fillStyle = '#e9edf4';
+  sctx.shadowColor = 'rgba(233,237,244,.7)';
+  sctx.shadowBlur = 14;
+  sctx.fill();
+  sctx.shadowBlur = 0;
+
+  sctx.beginPath(); sctx.arc(t.x, t.y, 3, 0, Math.PI * 2);
+  sctx.fillStyle = '#0b1220';
+  sctx.fill();
+
+  sctx.restore();
+}
+
+function dibujarCuenta(){
+  const { w, h } = state;
+  const n = Math.ceil(state.countdown);
+  sctx.save();
+  sctx.textAlign = 'center';
+  sctx.textBaseline = 'middle';
+  sctx.fillStyle = 'rgba(233,237,244,.92)';
+  sctx.font = '700 84px -apple-system,system-ui,sans-serif';
+  sctx.fillText(String(n), w / 2, h / 2 - 10);
+  sctx.font = '600 14px -apple-system,system-ui,sans-serif';
+  sctx.fillStyle = 'rgba(147,161,184,.9)';
+  sctx.fillText('seguí el punto con la mirada', w / 2, h / 2 + 52);
+  sctx.restore();
+}
+
+function dibujarMirada(now){
+  if(!state.pointer && (now - state.lastGaze) > GAZE_FRESCA_MS) return;
+  const g = state.gazeScreen, t = state.target, tol = state.tolPx;
+  const fuera = !state.inside;
+  const col = fuera ? '#d4655a' : '#3fb6a8';
+
+  sctx.save();
+
+  /* Rastro de la mirada. */
+  if(state.trail.length > 2){
+    sctx.beginPath();
+    for(let i = 0; i < state.trail.length; i++){
+      const p = state.trail[i];
+      i ? sctx.lineTo(p.x, p.y) : sctx.moveTo(p.x, p.y);
+    }
+    sctx.strokeStyle = 'rgba(63,182,168,.28)';
+    sctx.lineWidth = 2;
+    sctx.stroke();
+  }
+
+  /* Hilo guía hacia el objetivo, solo cuando está lejos (si no, ensucia). */
+  const d = hypot(g.x - t.x, g.y - t.y);
+  if(d > tol * 1.3){
+    sctx.beginPath(); sctx.moveTo(g.x, g.y); sctx.lineTo(t.x, t.y);
+    sctx.strokeStyle = 'rgba(212,101,90,.25)';
+    sctx.lineWidth = 1.5;
+    sctx.setLineDash([4, 6]);
+    sctx.stroke();
+    sctx.setLineDash([]);
+    flecha(g, t, col);
+  }
+
+  /* Punto de mirada: cruz + halo. */
+  sctx.beginPath(); sctx.arc(g.x, g.y, 13, 0, Math.PI * 2);
+  sctx.fillStyle = fuera ? 'rgba(212,101,90,.14)' : 'rgba(63,182,168,.14)';
+  sctx.fill();
+
+  sctx.beginPath(); sctx.arc(g.x, g.y, 6.5, 0, Math.PI * 2);
+  sctx.fillStyle = col;
+  sctx.fill();
+  sctx.lineWidth = 1.5; sctx.strokeStyle = '#0b1220';
+  sctx.stroke();
+
+  sctx.beginPath();
+  sctx.moveTo(g.x - 16, g.y); sctx.lineTo(g.x - 8, g.y);
+  sctx.moveTo(g.x + 8, g.y);  sctx.lineTo(g.x + 16, g.y);
+  sctx.moveTo(g.x, g.y - 16); sctx.lineTo(g.x, g.y - 8);
+  sctx.moveTo(g.x, g.y + 8);  sctx.lineTo(g.x, g.y + 16);
+  sctx.strokeStyle = col;
+  sctx.lineWidth = 1.5;
+  sctx.stroke();
+
+  sctx.restore();
+}
+
+function flecha(a, b, col){
+  const ang = Math.atan2(b.y - a.y, b.x - a.x);
+  const r = 26;
+  const x = a.x + Math.cos(ang) * r, y = a.y + Math.sin(ang) * r;
+  sctx.save();
+  sctx.translate(x, y);
+  sctx.rotate(ang);
+  sctx.beginPath();
+  sctx.moveTo(8, 0); sctx.lineTo(-6, 5); sctx.lineTo(-6, -5);
+  sctx.closePath();
+  sctx.fillStyle = col;
+  sctx.globalAlpha = 0.8;
+  sctx.fill();
+  sctx.restore();
+}
+
+/* ---------- 10. HUD ---------- */
+function actualizarHud(now){
+  const pct = state.totalMs > 0 ? state.insideMs / state.totalMs : 0;
+  const cara = state.pointer ? 'puntero' : ((now - state.lastFace) < 700 ? 'OK' : 'no detectada');
+  const chipCara = state.pointer ? '' : (cara === 'OK' ? 'ok' : 'bad');
+
+  hud.innerHTML =
+    `<div class="chip ${chipCara}">Rostro <b>${cara}</b></div>` +
+    `<div class="chip">Dentro <b>${state.totalMs > 0.4 ? fmtPct(pct) : '—'}</b></div>` +
+    `<div class="chip">Racha <b>${state.insideRun.toFixed(1)} s</b></div>` +
+    `<div class="chip">Vel. <b>${Math.round(state.speedFactor * Math.min(state.w, state.h))} px/s</b></div>` +
+    `<div class="chip warn">Dir. <b>${state.dirNow >= 0 ? DIRS[state.dirNow].short : '·'}</b></div>` +
+    (state.shape === 'mixto' ? `<div class="chip">Forma <b>${state.subShape || '—'}</b></div>` : '') +
+    `<div class="chip">${Math.round(state.fps)} fps</div>`;
+
+  fTime.textContent = fmtClock(state.roundLen ? state.roundLeft : state.elapsed);
+  fPct.textContent = state.totalMs > 0.4 ? fmtPct(pct) : '—';
+  fScore.textContent = Math.round(state.score).toLocaleString('es-CL');
+
+  const sinCara = !state.pointer && state.running && (now - state.lastFace) > 1500 && state.phase === 'playing';
+  warnBar.style.display = sinCara ? 'block' : 'none';
+  if(sinCara) warnBar.textContent = 'No se ve la cara: acercate, mejorá la luz y mirá de frente. Si el cuadro de la cámara está negro, cerrá otras apps que la estén usando. La alarma está en pausa.';
+
+  if(!state.running) camInfo.textContent = 'Cámara apagada';
+  else if(state.pointer) camInfo.textContent = 'Modo puntero · sin cámara';
+  else {
+    const ojo = !state.eye ? '—'
+      : state.eye.R.ok && state.eye.L.ok ? 'los dos'
+      : state.eye.R.ok ? 'derecho' : state.eye.L.ok ? 'izquierdo' : 'cerrados';
+    const calTxt = state.calib.done
+      ? `<b style="color:${state.calib.errPx <= state.tolPx * 0.95 ? 'var(--good)' : 'var(--warn)'}">${state.calib.n} pts · ≈${Math.round(state.calib.errPx)} px</b>`
+      : `<b style="color:var(--warn)">no</b>`;
+    camInfo.innerHTML =
+      `Rostro: <b style="color:${cara === 'OK' ? 'var(--good)' : 'var(--bad)'}">${cara}</b><br>` +
+      `Ojos: <b>${ojo}</b><br>` +
+      `Calibración: ${calTxt}<br>` +
+      `Cámara: ${cam.videoWidth || '—'}×${cam.videoHeight || '—'}<br>` +
+      `Detección: ${Math.round(state.detMs)} ms · ${Math.round(state.detFps)}/s`;
+  }
+}
+
+/* ---------- 11. Resultados ---------- */
+function mostrarResultados(){
+  const pct = state.totalMs > 0 ? state.insideMs / state.totalMs : 0;
+  const perdido = state.elapsed > 0 ? state.lostMs / state.elapsed : 0;
+
+  $('resScore').textContent = Math.round(state.score).toLocaleString('es-CL');
+
+  const filas = [
+    ['Tiempo dentro del área', fmtPct(pct)],
+    ['Mejor racha dentro', state.bestRun.toFixed(1) + ' s'],
+    ['Tiempo medido', state.totalMs.toFixed(0) + ' s de ' + state.elapsed.toFixed(0) + ' s'],
+    ['Sin rostro', fmtPct(perdido)],
+    ['Velocidad final', Math.round(state.speedFactor * Math.min(state.w, state.h)) + ' px/s'],
+    ['Área de acierto', Math.round(state.tolPx) + ' px'],
+    ['Calibración (error)', state.calib.done && !state.pointer
+      ? `${state.calib.n} pts · ≈${Math.round(state.calib.errPx)} px` : '—'],
+    ['Recorrido', modeSel.options[modeSel.selectedIndex].text]
+  ];
+
+  const barras = DIRS.map((d, i) => {
+    const s = state.dirStats[i];
+    if(s.total < 0.15) return '';
+    const v = s.in / s.total;
+    const color = v >= 0.75 ? 'var(--good)' : v >= 0.45 ? 'var(--warn)' : 'var(--bad)';
+    return `<div class="bar"><span class="lbl">${d.lbl}</span>` +
+           `<span class="track"><span class="fill" style="width:${Math.round(v * 100)}%;background:${color}"></span></span>` +
+           `<span class="pct">${Math.round(v * 100)}%</span></div>`;
+  }).join('');
+
+  $('resBody').innerHTML =
+    filas.map(([k, v]) => `<div class="stat"><span>${k}</span><b>${v}</b></div>`).join('') +
+    (barras ? `<div class="bars"><div style="color:var(--ink);margin:14px 0 6px;font-weight:600;">Acierto por dirección del estímulo</div>${barras}</div>` : '');
+
+  results.classList.add('show');
+  btnPause.disabled = true;
+  $('settings').open = true;
+}
+
+
+/* ---------- 12. Bucle principal ---------- */
+function frame(now){
+  requestAnimationFrame(frame);
+  paso(now);
+}
+
+/* Un paso completo con un instante dado. Se exporta en window.juego para poder
+   simular una ronda desde la consola sin depender del refresco de pantalla. */
+function paso(now){
+  const dt = state.lastNow ? Math.min(0.06, (now - state.lastNow) / 1000) : 0.016;
+  state.lastNow = now;
+
+  if(state.running){
+    detectar(now);
+    const activo = state.phase === 'playing' && !state.paused;
+    if(activo) actualizarJuego(dt, now);
+    actualizarAlarma(activo ? dt : 0);
+  }
+
+  dibujar(now);
+  actualizarHud(now);
+
+  /* fps de pantalla y de inferencia */
+  state.frames++;
+  if(now - state.fpsT >= 1000){
+    state.fps = state.frames * 1000 / (now - state.fpsT);
+    state.detFps = state.detCount * 1000 / (now - state.fpsT);
+    state.frames = 0; state.detCount = 0; state.fpsT = now;
+  }
+
+  registrar(now);
+}
+
+/* ---------- 13. Registro y CSV ---------- */
+const filas = [];
+let ultimaFila = 0;
+function registrar(now){
+  if(!state.running || state.phase !== 'playing' || now - ultimaFila < 100) return;
+  ultimaFila = now;
+  const g = state.gazeScreen, t = state.target;
+  filas.push({
+    t: (now / 1000).toFixed(2),
+    fase: state.paused ? 'pausa' : (state.countdown > 0 ? 'cuenta' : 'juego'),
+    recorrido: state.shape + (state.shape === 'mixto' ? ':' + state.subShape : ''),
+    dir: state.dirNow >= 0 ? DIRS[state.dirNow].lbl : '',
+    objetivo_x: Math.round(t.x), objetivo_y: Math.round(t.y),
+    mirada_x: Math.round(g.x), mirada_y: Math.round(g.y),
+    dist_px: Math.round(state.dist),
+    area_px: Math.round(state.tolPx),
+    dentro: state.inside ? 1 : 0,
+    rostro: state.trackValid ? 1 : 0,
+    calibrado: state.calib.done ? 1 : 0,
+    puntaje: Math.round(state.score),
+    vel_px_s: Math.round(state.speedFactor * Math.min(state.w, state.h)),
+    yaw: state.head.yaw.toFixed(1),
+    pitch: state.head.pitch.toFixed(1),
+    fps: Math.round(state.fps)
+  });
+  if(filas.length > 30000) filas.shift();
+}
+
+function csv(){
+  if(!filas.length) return '';
+  const keys = Object.keys(filas[0]);
+  return [keys.join(','), ...filas.map(r => keys.map(k => r[k] ?? '').join(','))].join('\n');
+}
+function descargarCsv(){
+  const txt = csv();
+  if(!txt){ showError('Todavía no hay datos: jugá una ronda primero.'); return; }
+  const blob = new Blob([txt], { type: 'text/csv;charset=utf-8' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `seguimiento-ocular-${Date.now()}.csv`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+}
+btnCsv.addEventListener('click', descargarCsv);
+btnCsv2.addEventListener('click', descargarCsv);
+
+/* ---------- 14. Iniciar / detener / pausa ---------- */
+async function iniciar(){
+  btnStart.disabled = true;
+  statusEl.textContent = 'Pidiendo permisos…';
+  audio.ensure(); audio.resume(); audio.setVolume(+volRange.value / 100);
+
+  try{
+    state.pointer = pointerChk.checked;
+
+    if(state.pointer){
+      state.ready = true;
+      state.calib = { done: true, models: null, errPx: 0, n: 0, bias: { x: 0, y: 0 } };
+    }else{
+      if(!state.stream) state.stream = await iniciarCamara();
+      if(!state.lm){
+        statusEl.textContent = 'Cargando el modelo de seguimiento ocular…';
+        state.lm = await crearLandmarker();
+      }
+      state.ready = true;
+      state.lastFace = performance.now();   // da margen mientras se acomoda
+    }
+
+    ajustarLienzo();
+    state.running = true;
+    state.phase = 'idle';
+    state.paused = false;
+    state.lastVideoTime = -1;
+    state.fpsT = performance.now();
+    btnCal.disabled = state.pointer;
+    if(btnCenter) btnCenter.disabled = true;
+    btnStop.disabled = false;
+    btnPause.disabled = true;
+    overlay.classList.remove('show');
+    results.classList.remove('show');
+
+    if(navigator.wakeLock){
+      try{ state.wake = await navigator.wakeLock.request('screen'); }catch(e){ /* opcional */ }
+    }
+
+    if(state.pointer){
+      statusEl.textContent = 'Modo puntero listo (sin cámara). Jugá con el mouse o el dedo.';
+      prepararRonda();
+    }else{
+      statusEl.textContent = 'Cámara y modelo listos. Ahora pulsá «Calibrar».';
+    }
+  }catch(err){
+    console.error('[ojo] iniciar:', err);
+    let pista = '';
+    if(location.protocol === 'file:') pista = ' Estás abriendo el archivo con doble clic (file://): usá "abrir-juego.bat" y probá desde http://localhost.';
+    else if(!window.isSecureContext) pista = ' Sin HTTPS o localhost el navegador bloquea la cámara.';
+    else if(err.name === 'NotAllowedError' || err.name === 'SecurityError') pista = ' El permiso de cámara está bloqueado: tocá el candado de la barra de direcciones, poné "Cámara → Permitir" y recargá la página.';
+    else if(err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') pista = ' No se detectó ninguna cámara conectada.';
+    else if(err.name === 'NotReadableError' || err.name === 'TrackStartError') pista = ' Otra aplicación está usando la cámara (Zoom, Teams, OBS, la app Cámara de Windows…). Cerrala y reintentá.';
+    else if(err.name === 'OverconstrainedError') pista = ' La cámara no soporta el formato de video pedido.';
+    statusEl.textContent = 'Error: ' + err.message + pista;
+    showError('No se pudo iniciar: ' + err.message + pista);
+    btnStart.disabled = false;
+  }
+}
+
+function detener(){
+  state.running = false;
+  state.phase = 'idle';
+  state.paused = false;
+  state.ready = false;
+  state.calib = { done: false, models: null, errPx: 0, n: 0, bias: { x: 0, y: 0 } };
+  state.calTarget = null;
+  state.calProg = 0;
+  state.calibrating = false;
+  state.recentering = false;
+  state.calSesion++;
+  state.gazeValid = false;
+  state.lastGaze = -1e9;
+  state.eye = null;
+  state.pointer = false;
+  fX.reset(); fY.reset();
+  audio.alarmOff(); audio.guideOff();
+  state.wake?.release?.().catch?.(() => {});
+  state.wake = null;
+
+  if(state.stream){ state.stream.getTracks().forEach(t => t.stop()); state.stream = null; }
+  if(state.lm){ try{ state.lm.close(); }catch(e){} state.lm = null; }
+
+  btnStart.disabled = false;
+  btnCal.disabled = true;
+  if(btnCenter) btnCenter.disabled = true;
+  btnPause.disabled = true;
+  btnPause.textContent = 'Pausa';
+  btnStop.disabled = true;
+  calibHint.style.display = 'none';
+  results.classList.remove('show');
+  $('settings').open = true;
+  statusEl.textContent = 'Detenido.';
+  ajustarLienzo();
+}
+
+function alternarPausa(){
+  if(state.phase !== 'playing') return;
+  state.paused = !state.paused;
+  btnPause.textContent = state.paused ? 'Seguir' : 'Pausa';
+  if(state.paused){ audio.alarmOff(); audio.guideOff(); statusEl.textContent = 'En pausa.'; }
+  else statusEl.textContent = '¡Dale!';
+}
+
+/* ---------- 15. Controles ---------- */
+btnStart.addEventListener('click', iniciar);
+btnStop.addEventListener('click', detener);
+btnCal.addEventListener('click', calibrar);
+if(btnCenter) btnCenter.addEventListener('click', recentrar);
+btnPause.addEventListener('click', alternarPausa);
+btnHelp.addEventListener('click', () => overlay.classList.add('show'));
+btnOk.addEventListener('click', () => overlay.classList.remove('show'));
+btnAgain.addEventListener('click', () => { if(!state.ready) return; prepararRonda(); });
+btnRecal.addEventListener('click', () => { results.classList.remove('show'); calibrar(); });
+
+speedRange.addEventListener('input', () => {
+  state.speedFactor = +speedRange.value / 100;
+  speedShow.textContent = '×' + state.speedFactor.toFixed(2).replace('.', ',');
+});
+tolRange.addEventListener('input', () => {
+  state.tolPx = +tolRange.value;
+  tolShow.textContent = state.tolPx + ' px';
+});
+volRange.addEventListener('input', () => {
+  volShow.textContent = volRange.value + ' %';
+  audio.setVolume(+volRange.value / 100);
+});
+soundChk.addEventListener('change', () => { if(!soundChk.checked){ audio.alarmOff(); audio.guideOff(); } });
+guideChk.addEventListener('change', () => { if(!guideChk.checked) audio.guideOff(); });
+modeSel.addEventListener('change', () => {
+  state.shape = modeSel.value;
+  state.mixIdx = 0;
+  state.mixT = 0;
+  if(state.phase === 'playing') prepararRonda();
+  else setRecorrido(state.shape);
+});
+durSel.addEventListener('change', () => {
+  state.roundLen = +durSel.value;
+  if(state.phase === 'playing') state.roundLeft = state.roundLen || 0;
+});
+
+/* Modo prueba con puntero: sirve para enseñar la mecánica sin cámara y para
+   depurar el juego, pero no mide nada. */
+function ponerPuntero(){ state.pointer = pointerChk.checked; }
+pointerChk.addEventListener('change', () => {
+  if(state.running){ detener(); }
+  ponerPuntero();
+});
+mainEl.addEventListener('pointermove', e => {
+  if(!state.pointer || !state.running) return;
+  const r = stage.getBoundingClientRect();
+  state.gazeScreen = { x: e.clientX - r.left, y: e.clientY - r.top };
+  state.trackValid = true;
+});
+mainEl.addEventListener('pointerdown', e => {
+  if(!state.pointer || !state.running) return;
+  const r = stage.getBoundingClientRect();
+  state.gazeScreen = { x: e.clientX - r.left, y: e.clientY - r.top };
+  state.trackValid = true;
+  audio.resume();
+});
+
+window.addEventListener('keydown', e => {
+  const tag = e.target?.tagName;
+  if(tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return;
+  if(e.code === 'Space' || e.key === 'p' || e.key === 'P'){ e.preventDefault(); alternarPausa(); }
+  if(e.key === 'c' || e.key === 'C'){ if(state.calib.done && !state.calibrating) recentrar(); }
+  if(e.key === 'Escape') detener();
+});
+
+/* ---------- 16. Arranque ---------- */
+speedShow.textContent = '×' + (speedRange.value / 100).toFixed(2).replace('.', ',');
+tolShow.textContent = tolRange.value + ' px';
+volShow.textContent = volRange.value + ' %';
+
+ajustarLienzo();
+setRecorrido(modeSel.value);
+state.roundLen = +durSel.value;
+state.roundLeft = state.roundLen;
+
+/* El bucle corre siempre: dibuja la pantalla de reposo antes de iniciar y,
+   una vez encendida la cámara, hace la inferencia y el juego. */
+requestAnimationFrame(frame);
+
+window.juego = {
+  state, filas, csv, descargarCsv, audio, Path, paso,
+  version: '2.1',
+  calibrar, recentrar, puntosCalibracion,
+  /* Para pruebas sin cámara: permite alimentar landmarks sintéticos y
+     verificar la geometría y la regresión por separado. */
+  _test: {
+    extraerOjos, ojoDesde, poseDesdeMatriz, vectorCrudo, vectorPara,
+    entrenarModelo, predecirCrudo, predecirModelo, proyectar, procesarMirada,
+    ajustarRidge, evaluarCV, mediana, medianaMuestras, medianaRobusta, EYE, ESC_X, ESC_Y
+  },
+  nota: 'state.gazeScreen, state.target y state.dirStats tienen todo lo que se mide.'
+};
+console.log('[ojo] listo. Inspeccioná window.juego.state en la consola.');
+
+</script>
+</body>
+</html>
