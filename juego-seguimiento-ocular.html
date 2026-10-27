@@ -76,6 +76,13 @@
     background:rgba(17,27,46,.9); border:1px solid var(--line); color:var(--ink-dim);
     font-size:13px; padding:6px 14px; border-radius:20px; display:none; white-space:nowrap; }
 
+  /* Barra de estado de pupilas: aparece en cuanto la cámara está corriendo. */
+  #pupilBar{ position:absolute; top:44px; left:50%; transform:translateX(-50%); z-index:5;
+    background:rgba(17,27,46,.94); border:1px solid var(--warn); color:var(--warn);
+    font-size:12.5px; font-weight:600; padding:6px 14px; border-radius:20px;
+    display:none; white-space:nowrap; }
+  #pupilBar.ok{ border-color:var(--good); color:var(--good); }
+
   .screen{ position:absolute; inset:0; z-index:6; display:none; align-items:center;
     justify-content:center; padding:20px; background:rgba(11,18,32,.94); overflow:auto; }
   .screen.show{ display:flex; }
@@ -209,6 +216,7 @@
       <canvas id="stage"></canvas>
       <div id="hud"></div>
       <div id="calibHint"></div>
+      <div id="pupilBar"></div>
       <div id="warnBar"></div>
     </div>
 
@@ -300,6 +308,7 @@ const mainEl = $('play');
 const overlay = $('overlay');
 const results = $('results');
 const calibHint = $('calibHint');
+const pupilBar = $('pupilBar');
 const warnBar = $('warnBar');
 const hud = $('hud');
 const camInfo = $('camInfo');
@@ -349,6 +358,7 @@ const state = {
   lastGaze: -1e9,
   eye: null,               // ojos normalizados del último cuadro
   raw: null,
+  pupilasOk: false,        // ambas pupilas/iris visibles en el último cuadro
   gazeScreen: { x: 0, y: 0 },
   gazeValid: false,
   gazeConf: 0,
@@ -1006,8 +1016,11 @@ function puntosCalibracion(){
     (Math.abs(a.nx) + Math.abs(a.ny)) - (Math.abs(b.nx) + Math.abs(b.ny)));
 }
 
-/* Junta cuadros durante `ms`. Guarda SOLO datos crudos del ojo: el vector de
-   features se arma al entrenar, así se puede filtrar por ojo disponible. */
+/* Junta cuadros durante `ms` PERO solo guarda muestras con ambas pupilas
+   visibles y ojos suficientemente abiertos. El anillo de progreso refleja
+   muestras válidas reunidas: sin pupilas, no se llena. */
+const CAL_MIN_MUESTRAS = 18;   // ~0,6 s de cámara a 30 fps
+
 function capturarPunto(ms){
   return new Promise(resolve => {
     const out = [];
@@ -1015,17 +1028,22 @@ function capturarPunto(ms){
     const iv = setInterval(() => {
       const now = performance.now();
       if(state.eye && (now - state.lastFace) < 350){
-        /* Solo aceptar ojos abiertos y con valores razonables */
         const oR = state.eye.R, oL = state.eye.L;
-        if((oR.ok || oL.ok) && (oR.ear > 0.16 || oL.ear > 0.16)){
+        /* Exigir LAS DOS pupilas + ojos bien abiertos */
+        if(oR.ok && oL.ok && oR.ear >= 0.18 && oL.ear >= 0.18){
           out.push({
             o: { R: { ...state.eye.R }, L: { ...state.eye.L } },
             head: { ...state.head }
           });
         }
       }
-      state.calProg = clamp((now - t0) / ms, 0, 1);
-      if(now - t0 >= ms){ clearInterval(iv); resolve(out); }
+      /* Progreso = proporción de muestras válidas respecto del mínimo.
+         Si no hay pupilas, el anillo se congela aunque pase el tiempo. */
+      state.calProg = clamp(out.length / CAL_MIN_MUESTRAS, 0, 1);
+      if(out.length >= CAL_MIN_MUESTRAS || now - t0 >= ms){
+        clearInterval(iv);
+        resolve(out);
+      }
     }, 33);
   });
 }
@@ -1068,7 +1086,7 @@ function medianaMuestras(muestras){
 
 function liberarBotonesCalib(habilitar){
   btnStart.disabled = !habilitar;
-  btnCal.disabled = !habilitar;
+  btnCal.disabled = !habilitar || !state.pupilasOk;   // nunca sin ambas pupilas
   btnPause.disabled = !habilitar;
   if(btnCenter) btnCenter.disabled = !habilitar || !state.calib.done;
 }
@@ -1104,6 +1122,23 @@ async function calibrar(){
     state.calProg = 0;
     calibHint.style.display = 'none';
   };
+
+  /* ETAPA 1: no se muestra ni un punto hasta detectar LAS DOS pupilas.
+     Mensaje + espera activa con cancelación (Detener). */
+  state.calTarget = null;
+  state.calProg = 0;
+  while(!state.pupilasOk){
+    calibHint.style.display = 'block';
+    calibHint.textContent = 'Buscando ambas pupilas… mirá a la cámara con los dos ojos bien abiertos';
+    statusEl.textContent = 'Esperando pupilas…';
+    await sleep(150);
+    if(abortado()){ abortar(); return; }
+  }
+
+  /* ETAPA 2: ya con ambas pupilas → recorrer los puntos. */
+  calibHint.textContent = 'Pupilas detectadas ✔ — empezamos';
+  await sleep(350);
+  if(abortado()){ abortar(); return; }
 
   for(let i = 0; i < pts.length; i++){
     if(abortado()){ abortar(); return; }
@@ -1788,6 +1823,39 @@ function flecha(a, b, col){
 }
 
 /* ---------- 10. HUD ---------- */
+/* Barra de estado de pupilas + habilitación de «Calibrar».
+   Es la puerta de entrada: sin ambas pupilas visibles no se puede calibrar. */
+function actualizarPupilas(now){
+  if(!state.running || state.pointer){
+    pupilBar.style.display = 'none';
+    if(!state.calibrating) btnCal.disabled = true;
+    return;
+  }
+
+  const fresco = state.eye && (now - state.lastFace) < 600;
+  const tieneR = !!(fresco && state.eye.R && state.eye.R.ok);
+  const tieneL = !!(fresco && state.eye.L && state.eye.L.ok);
+  state.pupilasOk = tieneR && tieneL;
+
+  let txt, ok = false;
+  if(!fresco) txt = 'SIN ROSTRO — acercate a la cámara';
+  else if(!tieneR && !tieneL) txt = 'BUSCANDO PUPILAS… abrí bien los ojos y mejorá la luz';
+  else if(!tieneR) txt = 'FALTA PUPILA DERECHA — mirá al centro de la cámara';
+  else if(!tieneL) txt = 'FALTA PUPILA IZQUIERDA — mirá al centro de la cámara';
+  else {
+    txt = state.calib.done ? 'AMBAS PUPILAS DETECTADAS ✔ seguimiento activo'
+                           : 'AMBAS PUPILAS DETECTADAS ✔ ya podés calibrar';
+    ok = true;
+  }
+
+  pupilBar.style.display = 'block';
+  pupilBar.classList.toggle('ok', ok);
+  pupilBar.textContent = txt;
+
+  /* Calibrar solo se habilita con ambas pupilas presentes (y no calibrando). */
+  if(!state.calibrating) btnCal.disabled = !state.pupilasOk;
+}
+
 function actualizarHud(now){
   const pct = state.totalMs > 0 ? state.insideMs / state.totalMs : 0;
   const cara = state.pointer ? 'puntero' : ((now - state.lastFace) < 700 ? 'OK' : 'no detectada');
@@ -1885,6 +1953,8 @@ function paso(now){
     if(activo) actualizarJuego(dt, now);
     actualizarAlarma(activo ? dt : 0);
   }
+
+  actualizarPupilas(now);
 
   dibujar(now);
   actualizarHud(now);
@@ -2020,6 +2090,7 @@ function detener(){
   state.gazeValid = false;
   state.lastGaze = -1e9;
   state.eye = null;
+  state.pupilasOk = false;
   state.pointer = false;
   fX.reset(); fY.reset();
   audio.alarmOff(); audio.guideOff();
@@ -2132,7 +2203,7 @@ requestAnimationFrame(frame);
 
 window.juego = {
   state, filas, csv, descargarCsv, audio, Path, paso,
-  version: '2.1',
+  version: '2.2',
   calibrar, recentrar, puntosCalibracion,
   /* Para pruebas sin cámara: permite alimentar landmarks sintéticos y
      verificar la geometría y la regresión por separado. */
