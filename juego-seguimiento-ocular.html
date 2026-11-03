@@ -232,7 +232,8 @@
         <ul>
           <li>Un punto recorre la pantalla en <b>distintas direcciones</b>. Hay que seguirlo con la mirada, no con la cabeza.</li>
           <li>Alrededor del punto hay un <b>área de acierto</b>. Mientras tu mirada está adentro sumás puntos; si sale, <b>suena la alarma</b>.</li>
-          <li>Primero se pulsa <b>Iniciar</b> (permiso de cámara) y después <b>Calibrar</b>: mirá los puntos sin mover la cabeza (16 en modo preciso, 9 en rápido).</li>
+          <li><b>Escaneo automático:</b> al pulsar <b>Iniciar</b> el sistema escanea las dos pupilas (barra de estado). Cuando el escaneo llega al 100%, <b>la calibración arranca sola</b> desde el primer punto.</li>
+          <li>En cada punto de calibración, el anillo <b>solo se llena mirando la diana</b> con ambas pupilas bien visibles. Si cerrás o tapás los ojos, se corta y vuelve a empezar cuando el escaneo se complete de nuevo.</li>
           <li>Si con el correr de los minutos la mirada se corre, pulsá <b>Recentrar</b> y mirá el punto del centro: corrige la deriva sin recalibrar todo.</li>
           <li>Buena luz de frente, sin contraluz, y el iris despejado (sin pelo ni reflejos en los lentes).</li>
           <li>Al terminar la ronda ves <b>el porcentaje de acierto por dirección</b>: ahí se nota hacia dónde le cuesta más seguir.</li>
@@ -359,6 +360,7 @@ const state = {
   eye: null,               // ojos normalizados del último cuadro
   raw: null,
   pupilasOk: false,        // ambas pupilas/iris visibles en el último cuadro
+  pupStreak: 0,            // cuadros seguidos con ambas pupilas (escaneo)
   gazeScreen: { x: 0, y: 0 },
   gazeValid: false,
   gazeConf: 0,
@@ -1020,29 +1022,53 @@ function puntosCalibracion(){
    visibles y ojos suficientemente abiertos. El anillo de progreso refleja
    muestras válidas reunidas: sin pupilas, no se llena. */
 const CAL_MIN_MUESTRAS = 18;   // ~0,6 s de cámara a 30 fps
+const CAL_MOVMAX = 0.035;      // umbral de fijación (suma de |Δu|+|Δv| por ojo)
+const CAL_GAP_MS = 600;        // sin muestras válidas este tiempo = bloqueo
 
+/* Junta muestras de un punto de calibración con dos veredictos:
+   - muestras: SOLO cuadros con ambas pupilas visibles, ojos abiertos y
+     ojo QUIETO (fijación). Si el usuario mira hacia otro lado, el anillo
+     no avanza: el relleno solo ocurre mirando la diana.
+   - interrumpido: true si durante el punto quedó >CAL_GAP_MS sin poder
+     capturar nada (ojos cerrados, tapados, fuera de cámara). En ese caso
+     la calibración se corta y se reinicia cuando el escaneo vuelva a estar
+     completo. */
 function capturarPunto(ms){
   return new Promise(resolve => {
     const out = [];
     const t0 = performance.now();
+    let prev = null;          // u,v del cuadro anterior (para medir fijación)
+    let lastValid = t0;
     const iv = setInterval(() => {
       const now = performance.now();
-      if(state.eye && (now - state.lastFace) < 350){
-        const oR = state.eye.R, oL = state.eye.L;
-        /* Exigir LAS DOS pupilas + ojos bien abiertos */
-        if(oR.ok && oL.ok && oR.ear >= 0.18 && oL.ear >= 0.18){
+      const ojos = state.eye && (now - state.lastFace) < 350 ? state.eye : null;
+
+      if(ojos && ojos.R.ok && ojos.L.ok && ojos.R.ear >= 0.18 && ojos.L.ear >= 0.18){
+        /* Fijación: comparar con el cuadro anterior. Una sacada o un ojo
+           moviéndose (mirando otra cosa) supera el umbral y no cuenta. */
+        const mov = prev
+          ? Math.abs(ojos.R.u - prev.uR) + Math.abs(ojos.R.v - prev.vR) +
+            Math.abs(ojos.L.u - prev.uL) + Math.abs(ojos.L.v - prev.vL)
+          : 99;
+        if(mov < CAL_MOVMAX){
           out.push({
-            o: { R: { ...state.eye.R }, L: { ...state.eye.L } },
+            o: { R: { ...ojos.R }, L: { ...ojos.L } },
             head: { ...state.head }
           });
+          lastValid = now;
         }
+        prev = { uR: ojos.R.u, vR: ojos.R.v, uL: ojos.L.u, vL: ojos.L.v };
+      }else{
+        prev = null;
       }
-      /* Progreso = proporción de muestras válidas respecto del mínimo.
-         Si no hay pupilas, el anillo se congela aunque pase el tiempo. */
+
+      /* Anillo = muestras válidas reunidas. Sin pupilas o sin fijar la
+         mirada, el anillo se congela. */
       state.calProg = clamp(out.length / CAL_MIN_MUESTRAS, 0, 1);
-      if(out.length >= CAL_MIN_MUESTRAS || now - t0 >= ms){
+      const interrumpido = (now - lastValid) > CAL_GAP_MS;
+      if(out.length >= CAL_MIN_MUESTRAS || now - t0 >= ms || interrumpido){
         clearInterval(iv);
-        resolve(out);
+        resolve({ muestras: out, interrumpido });
       }
     }, 33);
   });
@@ -1140,18 +1166,40 @@ async function calibrar(){
   await sleep(350);
   if(abortado()){ abortar(); return; }
 
+  /* Introducción al protocolo: el anillo solo avanza mirando la diana. */
   for(let i = 0; i < pts.length; i++){
     if(abortado()){ abortar(); return; }
     const p = pts[i];
     state.calTarget = p;
     state.calProg = 0;
-    calibHint.style.display = 'block';
-    calibHint.textContent = `Punto ${i + 1}/${pts.length} — miralo fijo, sin mover la cabeza`;
-    await sleep(500);                       // deja terminar la sacada
-    const muestras = await capturarPunto(850); // más muestras para mayor precisión
-    if(abortado()){ abortar(); return; }
-    const med = medianaMuestras(muestras);
-    if(med && med.o.R.ok && med.o.L.ok) capturados.push({ ...med, nx: p.nx, ny: p.ny }); // prioriza ambos ojos
+
+    /* Robusto: hasta 2 intentos por punto (ganas de parpadear, micro-movidas). */
+    let captura = null, med = null;
+    for(let intento = 0; intento < 2 && !med; intento++){
+      if(abortado()){ abortar(); return; }
+      calibHint.style.display = 'block';
+      calibHint.textContent = intento === 0
+        ? `Punto ${i + 1}/${pts.length} — miralo fijo, el anillo se llena mirando`
+        : `Punto ${i + 1}/${pts.length} — otra vez, quitate de la vista tapa ojos`;
+      await sleep(intento === 0 ? 450 : 250);      // deja terminar la sacada
+      captura = await capturarPunto(1200);
+      if(abortado()){ abortar(); return; }
+
+      if(captura.interrumpido){
+        /* Ojos cerrados/tapados/fuera de cámara: cortar TODO y empezar de
+           nuevo cuando el escaneo de pupilas vuelva a estar completo. */
+        abortar();
+        state.pupStreak = 0;
+        statusEl.textContent = 'Escaneo interrumpido. Se reinicia cuando se vean bien las pupilas.';
+        showError('La calibración se cortó (ojos cerrados o tapados, o pupilas fuera de cámara).\n\n' +
+          'Volvé a mirar la cámara con los dos ojos abiertos: cuando el escaneo llegue al 100%, la calibración arranca de nuevo sola desde el primer punto.');
+        return;
+      }
+
+      med = medianaMuestras(captura.muestras);
+    }
+
+    if(med && med.o.R.ok && med.o.L.ok) capturados.push({ ...med, nx: p.nx, ny: p.ny }); // ambos ojos
     else if(med) capturados.push({ ...med, nx: p.nx, ny: p.ny });
   }
 
@@ -1226,7 +1274,7 @@ async function recentrar(){
   statusEl.textContent = 'Recentrando…';
   await sleep(500);
 
-  const muestras = await capturarPunto(1100);
+  const captura = await capturarPunto(1100);
   if(sesion !== state.calSesion || !state.running){
     state.recentering = false;
     state.calProg = 0;
@@ -1234,17 +1282,20 @@ async function recentrar(){
     return;
   }
   const preds = [];
-  for(const s of muestras){
+  for(const s of captura.muestras){
     const pr = predecirCrudo(s.o, s.head);
     if(pr) preds.push(pr);
   }
+  const perdioPupila = captura.interrumpido;
 
   state.recentering = false;
   state.calProg = 0;
   calibHint.style.display = 'none';
 
   if(preds.length < 8){
-    showError('No se pudo recentrar: necesitás más cuadros con ambos ojos abiertos.');
+    showError(perdioPupila
+      ? 'No se pudo recentrar: las pupilas se taparon o cerraron durante la medición.'
+      : 'No se pudo recentrar: necesitás más cuadros con ambos ojos abiertos.');
     statusEl.textContent = 'Recentrado cancelado.';
     return;
   }
@@ -1823,12 +1874,17 @@ function flecha(a, b, col){
 }
 
 /* ---------- 10. HUD ---------- */
-/* Barra de estado de pupilas + habilitación de «Calibrar».
-   Es la puerta de entrada: sin ambas pupilas visibles no se puede calibrar. */
+/* Escaneo de pupilas + puerta de entrada de la calibración.
+   - El escaneo se considera completo solo cuando AMBAS pupilas visible y
+     estables se sostienen PUP_STREAK_N cuadros seguidos (~1,5 s).
+   - Al completarse, si no hay calibración, se inicia SOLO. */
+const PUP_STREAK_N = 45;         // cuadros consecutivos con ambas pupilas (~1,5 s)
+
 function actualizarPupilas(now){
   if(!state.running || state.pointer){
     pupilBar.style.display = 'none';
     if(!state.calibrating) btnCal.disabled = true;
+    state.pupStreak = 0;
     return;
   }
 
@@ -1837,20 +1893,38 @@ function actualizarPupilas(now){
   const tieneL = !!(fresco && state.eye.L && state.eye.L.ok);
   state.pupilasOk = tieneR && tieneL;
 
+  /* Racha de escaneo: solo crece con ambas pupilas visibles; cualquier
+     interrupción (parpadeo largo, mano, mirada fuera) la corta. */
+  if(state.pupilasOk){
+    if(state.pupStreak < PUP_STREAK_N) state.pupStreak++;
+  }else{
+    state.pupStreak = 0;
+  }
+  const escaneoPct = Math.min(100, Math.round(state.pupStreak / PUP_STREAK_N * 100));
+  const escaneado = state.pupStreak >= PUP_STREAK_N;
+
   let txt, ok = false;
-  if(!fresco) txt = 'SIN ROSTRO — acercate a la cámara';
+  if(!fresco) txt = 'SIN ROSTRO — escaneo detenido, acercate a la cámara';
   else if(!tieneR && !tieneL) txt = 'BUSCANDO PUPILAS… abrí bien los ojos y mejorá la luz';
-  else if(!tieneR) txt = 'FALTA PUPILA DERECHA — mirá al centro de la cámara';
-  else if(!tieneL) txt = 'FALTA PUPILA IZQUIERDA — mirá al centro de la cámara';
-  else {
-    txt = state.calib.done ? 'AMBAS PUPILAS DETECTADAS ✔ seguimiento activo'
-                           : 'AMBAS PUPILAS DETECTADAS ✔ ya podés calibrar';
+  else if(!tieneR) txt = 'ESCANEO INTERRUMPIDO — falta la pupila derecha';
+  else if(!tieneL) txt = 'ESCANEO INTERRUMPIDO — falta la pupila izquierda';
+  else if(escaneado){
+    txt = state.calib.done ? 'PUPILAS ESCANEADAS ✔ seguimiento activo'
+                           : 'PUPILAS ESCANEADAS ✔ — calibración automática…';
     ok = true;
   }
+  else txt = `ESCANEANDO PUPILAS… ${escaneoPct}%`;
 
   pupilBar.style.display = 'block';
   pupilBar.classList.toggle('ok', ok);
   pupilBar.textContent = txt;
+
+  /* AUTO-INICIO de calibración: solo con el escaneo completo y estable. */
+  if(!state.calibrating && !state.recentering && !state.calib.done &&
+     state.running && !state.pointer && escaneado){
+    calibrar();
+    return;
+  }
 
   /* Calibrar solo se habilita con ambas pupilas presentes (y no calibrando). */
   if(!state.calibrating) btnCal.disabled = !state.pupilasOk;
@@ -2091,6 +2165,7 @@ function detener(){
   state.lastGaze = -1e9;
   state.eye = null;
   state.pupilasOk = false;
+  state.pupStreak = 0;
   state.pointer = false;
   fX.reset(); fY.reset();
   audio.alarmOff(); audio.guideOff();
@@ -2203,7 +2278,7 @@ requestAnimationFrame(frame);
 
 window.juego = {
   state, filas, csv, descargarCsv, audio, Path, paso,
-  version: '2.2',
+  version: '2.3',
   calibrar, recentrar, puntosCalibracion,
   /* Para pruebas sin cámara: permite alimentar landmarks sintéticos y
      verificar la geometría y la regresión por separado. */
