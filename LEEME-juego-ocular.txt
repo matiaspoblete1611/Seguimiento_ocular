@@ -59,6 +59,11 @@ Controles
               Círculo, Ocho, Saltos aleatorios y Mixto (cambia cada 8 s).
   Velocidad:  fracción del tamaño de pantalla por segundo (el HUD muestra px/s).
   Área de acierto: 20-160 px de radio. Es el "tamaño del acierto".
+  Ayuda de seguimiento: 0-10 grados. Radio de tolerancia extra alrededor del punto.
+  Amplitud ocular máx.: 10-60 grados. Limita los recorridos a ese ángulo.
+  Distancia / Pantalla: distancia ojos-pantalla en cm y diagonal del monitor en
+  pulgadas. Con esos dos datos el juego convierte los grados a píxeles reales de
+  TU pantalla (probad a medir la distancia a la que estás sentado).
   Duración:   30 / 60 / 120 s o sin límite.
   Dificultad automática: sube la velocidad cada 10 s.
   Tono guía:  un tono suave que se vuelve más agudo al acercarse al punto.
