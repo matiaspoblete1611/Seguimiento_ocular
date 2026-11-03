@@ -44,6 +44,9 @@
   select,input[type=range]{ width:100%; }
   select{ background:var(--bg); color:var(--ink); border:1px solid var(--line);
     border-radius:6px; padding:6px 8px; font-size:13px; font-family:inherit; }
+  .numrow{ display:flex; align-items:center; gap:4px; font-size:11.5px; color:var(--ink-dim); margin-top:4px; flex-wrap:wrap; }
+  .numrow input{ width:52px; background:var(--bg); color:var(--ink); border:1px solid var(--line); border-radius:6px; padding:2px 4px; }
+  .numrow label{ margin-left:4px; }
   .checkrow{ display:flex; align-items:center; gap:6px; font-size:12px; color:var(--ink-dim); margin-top:4px; }
   .checkrow input{ accent-color:var(--good); }
   .checkrow label{ margin:0; color:var(--ink-dim); }
@@ -161,13 +164,27 @@
       </div>
 
       <div class="field">
-        <label for="speedRange">Velocidad: <span class="val" id="speedShow">×0,30</span></label>
-        <input type="range" id="speedRange" min="8" max="110" step="2" value="30">
+        <label for="speedRange">Velocidad: <span class="val" id="speedShow">10 °/s</span></label>
+        <input type="range" id="speedRange" min="2" max="40" step="1" value="10">
       </div>
 
       <div class="field">
         <label for="tolRange">Área de acierto: <span class="val" id="tolShow">70 px</span></label>
         <input type="range" id="tolRange" min="20" max="160" step="5" value="70">
+      </div>
+
+      <div class="field">
+        <label for="asistRange">Ayuda de seguimiento: <span class="val" id="asistShow">5°</span></label>
+        <input type="range" id="asistRange" min="0" max="10" step="0.5" value="5">
+      </div>
+
+      <div class="field">
+        <label for="ampRange">Amplitud ocular máx.: <span class="val" id="ampShow">30°</span></label>
+        <input type="range" id="ampRange" min="10" max="60" step="2" value="30">
+        <div class="numrow">
+          <label for="distIn">Distancia</label><input type="number" id="distIn" min="25" max="150" step="1" value="55"><span>cm</span>
+          <label for="diagIn">Pantalla</label><input type="number" id="diagIn" min="10" max="100" step="0.5" value="27"><span>″</span>
+        </div>
       </div>
 
       <div class="field">
@@ -183,11 +200,11 @@
       <div class="field">
         <label for="calSel">Calibración</label>
         <select id="calSel">
+          <option value="9" selected>Normal (9 puntos)</option>
+          <option value="16">Precisa (16 puntos)</option>
           <option value="25">Ultra precisa (25 puntos)</option>
-          <option value="16" selected>Precisa (16 puntos)</option>
-          <option value="9">Rápida (9 puntos)</option>
         </select>
-        <div class="checkrow"><input type="checkbox" id="eyesOnlyChk" checked><label for="eyesOnlyChk">Usar solo ojos (ignorar movimiento de cabeza)</label></div>
+        <div class="checkrow"><input type="checkbox" id="headCalChk" checked><label for="headCalChk">Calibrar movimiento de cabeza (recomendado)</label></div>
         <div class="checkrow"><input type="checkbox" id="gazeChk" checked><label for="gazeChk">Mostrar mirada fuera del juego</label></div>
       </div>
 
@@ -320,11 +337,13 @@ const btnCenter = $('btnCenter');
 const btnAgain = $('btnAgain'), btnRecal = $('btnRecal');
 const btnCsv = $('btnCsv'), btnCsv2 = $('btnCsv2');
 
-const calSel = $('calSel'), gazeChk = $('gazeChk'), eyesOnlyChk = $('eyesOnlyChk');
+const calSel = $('calSel'), gazeChk = $('gazeChk'), headCalChk = $('headCalChk');
 
 const modeSel = $('modeSel'), durSel = $('durSel');
 const speedRange = $('speedRange'), speedShow = $('speedShow');
 const tolRange = $('tolRange'), tolShow = $('tolShow');
+const asistRange = $('asistRange'), asistShow = $('asistShow');
+const ampRange = $('ampRange'), ampShow = $('ampShow'), distIn = $('distIn'), diagIn = $('diagIn');
 const volRange = $('volRange'), volShow = $('volShow');
 const soundChk = $('soundChk'), guideChk = $('guideChk');
 const rampChk = $('rampChk'), pointerChk = $('pointerChk');
@@ -367,15 +386,20 @@ const state = {
   head: { yaw: 0, pitch: 0, roll: 0, tx: 0, ty: 0, tz: 0 },
   detMs: 0, detCount: 0, fps: 0, detFps: 0,
 
-  calib: { done: false, models: null, errPx: 0, n: 0, bias: { x: 0, y: 0 } },
+  geo: null,               // muestra del último cuadro para el modelo geométrico
+  frameId: 0,              // sube con cada cuadro analizado con cara
+  diag: { t: 0, nulos: 0, validos: 0, crudo: null },
+  calData: null,           // muestras de la última calibración (diagnóstico)
+  calib: { done: false, geo: null, errPx: 0, n: 0, sigmaPx: 35, bias: { x: 0, y: 0 } },
   calTarget: null,
   calProg: 0,
+  calCabeza: false,        // fase "mirá fijo y mové la cabeza"
   calSesion: 0,
   recentering: false,
 
   /* juego */
   shape: 'cross',
-  speedFactor: 0.30,
+  speedDeg: 10,            // velocidad del objetivo en grados/s de ángulo visual
   tolPx: 70,
   roundLen: 60,
   roundLeft: 60,
@@ -392,6 +416,11 @@ const state = {
 
   score: 0,
   insideMs: 0,
+  insideRealMs: 0,         // dentro SIN contar la ayuda (para el informe)
+  asistiendo: false,       // la ayuda está centrando la mirada en el objetivo
+  distReal: 0,             // distancia real mirada-objetivo (sin ayuda)
+  gazeView: null,          // mirada que se dibuja (con ayuda)
+  gPrev: null, gVel: { x: 0, y: 0 },
   totalMs: 0,
   lostMs: 0,
   trackValid: false,
@@ -586,40 +615,71 @@ async function iniciarCamara(){
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   5. Mirada: ojos normalizados por pose + regresión calibrada
+   5. Mirada: modelo geométrico cabeza + ojo, calibrado
    ───────────────────────────────────────────────────────────────────────────
-   Por qué esto funciona mejor que mirar el iris en la imagen:
+   1) Ojo-en-cabeza: se arma un triedro 3D con las comisuras y los párpados
+      de CADA ojo y se proyecta el centro del iris (promedio de los 5 puntos
+      del iris) en ese marco. Da (u, v): cuánto giró el ojo dentro de la cara.
+   2) Cabeza: rotación R y traslación t de facialTransformationMatrixes
+      (cm, cámara en el origen).
+   3) Rayo de mirada = R · (giro del ojo) saliendo desde los ojos; se corta
+      con el plano de la pantalla y una afín calibrada lo pasa a píxeles.
+      Así el objetivo se sigue igual con la cabeza quieta (todo lo hace el
+      ojo) que con la cabeza en movimiento (R y t aportan lo suyo), y la
+      distancia a la pantalla medida en cada cuadro entra en la cuenta.
+   4) Calibración: grilla de 9/16/25 puntos con cabeza quieta + un paso
+      "mirá fijo el punto y mové la cabeza" que mide la ganancia del ojo.
+   5) Filtro de Kalman de velocidad constante: suave en fijación y sin
+      retraso en persecución.
+   6) "Recentrar": mirás el centro y se corrige el sesgo acumulado.
 
-   1) Marco local del ojo (como la normalización de MPIIGaze): se arma un
-      triedro 3D con las comisuras y los párpados de CADA ojo y se proyecta el
-      iris en ese marco. Al girar la cabeza, el triedro gira con ella, así que
-      el dato que llega a la regresión es el giro del ojo respecto de la cara,
-      no respecto de la cámara. Eso saca de la ecuación la mayor fuente de
-      desviación cuando la cabeza se mueve.
-   2) Se usan los 5 puntos del iris (no el central solo) y los dos ojos por
-      separado. Un ojo tapado por pelo o un guiño no rompe la medición.
-   3) Regresión ridge con features estandarizadas y lambda elegida por
-      validación cruzada. Antes, con 9 puntos y lambda 1e-3, los coeficientes
-      de yaw/pitch quedaban sin restringir y cualquier movimiento de cabeza
-      mandaba la mirada lejos. Ahora el modelo se elige por error real.
-   4) Calibración de 16 puntos (o 9 en modo rápido), muestreo robusto con
-      mediana y descarte de parpadeos.
-   5) Recalibración de deriva ("Recentrar"): mirás el centro y se corrige el
-      sesgo acumulado, sin repetir los 16 puntos.
-
-   Referencias de diseño: WebGazer (regresión ridge + recalibración),
-   GazeFollower (MediaPipe Iris + calibración), MPIIGaze (normalización por
-   pose de cabeza), MediaPipe Iris (landmarks 468-477).
+   Referencias de diseño: modelos 3D de mirada (rayo ojo + pose de cabeza),
+   MPIIGaze (normalización por pose), WebGazer (recalibración rápida),
+   MediaPipe Iris (landmarks 468-477).
    ═══════════════════════════════════════════════════════════════════════════ */
 
-/* La calibración cubre ±42 % del ancho y ±38 % del alto del área de juego:
-   el mismo marco donde se dibujan los puntos de calibración y el objetivo. */
+/* ---------- Ángulos visuales ----------
+   El entrenamiento se limita en GRADOS de movimiento ocular, no en px.
+   px por cm sale de la diagonal declarada de la pantalla; la distancia es
+   la declarada, corregida en vivo por cuánto se acercó o alejó la cabeza
+   desde la calibración (tz de MediaPipe, usado solo como cociente). */
+function pxPorCm(){
+  const diag = clamp(+diagIn.value || 27, 10, 100) * 2.54;
+  return Math.hypot(screen.width, screen.height) / diag;
+}
+function distanciaCm(){
+  const d0 = clamp(+distIn.value || 55, 20, 200);
+  const tz0 = state.calib.tz0, tz = state.head && state.head.tz;
+  if(state.calib.done && tz0 && tz && (performance.now() - state.lastFace) < 1000)
+    return clamp(d0 * tz / tz0, d0 * 0.5, d0 * 1.8);
+  return d0;
+}
+function gradosAPx(g){ return distanciaCm() * Math.tan(g * Math.PI / 180) * pxPorCm(); }
+function pxAGrados(px){ return Math.atan(px / pxPorCm() / distanciaCm()) * 180 / Math.PI; }
+/* Semiamplitud permitida para el objetivo (px desde el centro). */
+function semiAmplitudPx(){ return gradosAPx(+ampRange.value / 2); }
+/* Velocidad angular → px/s (cerca del centro de la pantalla). */
+function velPx(){ return state.speedDeg * Math.PI / 180 * distanciaCm() * pxPorCm(); }
+
+/* Marco de calibración: los puntos cubren la amplitud de entrenamiento
+   (+10 % de margen), sin pasar de ±42 % del ancho y ±38 % del alto. Se
+   congela al calibrar: el modelo queda atado a ese marco. */
 const ESC_X = 0.42, ESC_Y = 0.38;
-function proyectar(nx, ny){
+function escalaCal(){
+  const semi = semiAmplitudPx() * 1.1;
   return {
-    x: state.w / 2 + nx * (state.w * ESC_X),
-    y: state.h / 2 + ny * (state.h * ESC_Y)
+    x: Math.max(120, Math.min(state.w * ESC_X, semi)),
+    y: Math.max(90, Math.min(state.h * ESC_Y, semi))
   };
+}
+function esc(){
+  if(state.calibrating && state.calEsc) return state.calEsc;
+  if(state.calib.done && state.calib.esc) return state.calib.esc;
+  return escalaCal();
+}
+function proyectar(nx, ny){
+  const e = esc();
+  return { x: state.w / 2 + nx * e.x, y: state.h / 2 + ny * e.y };
 }
 
 /* Índices de la malla (478 puntos, los 10 últimos son el iris). */
@@ -627,79 +687,90 @@ const EYE = {
   R: { outer: 33, inner: 133, top: 159, bot: 145, iris: [468, 469, 470, 471, 472] },
   L: { outer: 263, inner: 362, top: 386, bot: 374, iris: [473, 474, 475, 476, 477] }
 };
-const EAR_MIN = 0.13;      // debajo de esto el ojo está cerrado (parpadeo)
 const GAZE_FRESCA_MS = 400; // cuánto se sostiene la última mirada válida
 
 /* ---------- 5.1 Geometría del ojo ---------- */
-function sub3(a, b){ return { x: a.x - b.x, y: a.y - b.y, z: a.z - b.z }; }
-function dot3(a, b){ return a.x * b.x + a.y * b.y + a.z * b.z; }
-function norm3(a){
-  const n = Math.hypot(a.x, a.y, a.z) || 1;
-  return { x: a.x / n, y: a.y / n, z: a.z / n };
-}
 function dist3(a, b){ return Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z); }
 
-/* MediaPipe da x,y normalizados por ancho y alto, y z por el ancho. Se pasa
-   todo a píxeles (z incluido) para que el triedro sea geométricamente sano. */
-function ojoDesde(lm, cfg, W, H){
+/* Parpadeo adaptativo: cada ojo se compara con SU apertura típica (que
+   depende de la persona y de cuán girada está la cara respecto de la
+   cámara). Un umbral fijo dejaba "cerrado" a un ojo abierto mirado de lado. */
+const earRef = { R: 0, L: 0 };
+function abiertoAdaptativo(lado, ear){
+  let ref = earRef[lado];
+  if(!ref) ref = ear;
+  else if(ear > ref) ref += (ear - ref) * 0.05;     // sube rápido
+  else ref += (ear - ref) * 0.003;                  // baja muy lento
+  earRef[lado] = ref;
+  return ear > 0.05 && ear > ref * 0.6;
+}
+
+/* Medición del ojo. Datos reales de MediaPipe:
+   - x, y de todos los puntos: buenos (en píxeles de la imagen sin espejar);
+   - z de comisuras y párpados: razonable (sale de la malla 3D);
+   - z del iris: NO se mide (es el mismo valor en los 5 puntos del iris).
+   Por eso el iris se usa SOLO en 2D: m = desplazamiento del centro del iris
+   respecto del punto medio entre comisuras, en la imagen, dividido por el
+   ancho 3D del ojo (que no cambia al girar la cabeza). Se expresa en el
+   marco de la cámara de la matriz: x a la derecha, y hacia ARRIBA.
+   El giro de la cabeza (paralaje entre iris y comisuras) se resuelve en el
+   modelo, no acá. */
+function ojoDesde(lm, cfg, W, H, lado){
   const P = i => {
     const p = lm[i];
     return p ? { x: p.x * W, y: p.y * H, z: (p.z || 0) * W } : null;
   };
+  const nada = { ok: false, u: 0, v: 0, ear: 0, w2: 0 };
   const outer = P(cfg.outer), inner = P(cfg.inner), top = P(cfg.top), bot = P(cfg.bot);
-  if(!outer || !inner || !top || !bot) return { ok: false, u: 0, v: 0, ear: 0 };
+  if(!outer || !inner || !top || !bot) return nada;
 
-  let ix = 0, iy = 0, iz = 0, n = 0;
+  let ix = 0, iy = 0, n = 0;
   for(const k of cfg.iris){
     const p = P(k);
-    if(p){ ix += p.x; iy += p.y; iz += p.z; n++; }
+    if(p){ ix += p.x; iy += p.y; n++; }
   }
-  if(!n) return { ok: false, u: 0, v: 0, ear: 0 };
-  const iris = { x: ix / n, y: iy / n, z: iz / n };
+  if(!n) return nada;
 
-  const mid = {
-    x: (outer.x + inner.x) / 2,
-    y: (outer.y + inner.y) / 2,
-    z: (outer.z + inner.z) / 2
-  };
-  /* Eje horizontal del ojo (comisura externa → interna) y vertical
-     (párpado inferior → superior), ortogonalizados entre sí. */
-  const ex = norm3(sub3(outer, inner));
-  const abajo = sub3(bot, top);
-  const ey = norm3({
-    x: abajo.x - ex.x * dot3(abajo, ex),
-    y: abajo.y - ex.y * dot3(abajo, ex),
-    z: abajo.z - ex.z * dot3(abajo, ex)
-  });
-  const ancho = dist3(outer, inner) || 1;
-  const alto = dist3(top, bot) || 1;
-  const d = sub3(iris, mid);
-
-  const u = dot3(d, ex) / ancho;   // desplazamiento del iris / ancho del ojo
-  const v = dot3(d, ey) / alto;    // desplazamiento vertical / alto del ojo
-  const ear = alto / ancho;        // apertura (parpadeo)
-  const ok = isFinite(u) && isFinite(v) && isFinite(ear) &&
-             ear > EAR_MIN && Math.abs(u) < 0.75 && Math.abs(v) < 1.1;
-  return { ok, u, v, ear, px: iris.x / W, py: iris.y / H };
+  const ancho3 = dist3(outer, inner) || 1;
+  const ancho2 = Math.hypot(outer.x - inner.x, outer.y - inner.y);
+  const alto3 = dist3(top, bot);
+  const mx = (ix / n - (outer.x + inner.x) / 2) / ancho3;
+  const my = -(iy / n - (outer.y + inner.y) / 2) / ancho3;
+  const ear = alto3 / ancho3;
+  const abierto = abiertoAdaptativo(lado, ear);
+  const ok = isFinite(mx) && isFinite(my) && abierto && ancho2 > 6 &&
+             Math.abs(mx) < 0.6 && Math.abs(my) < 0.6;
+  /* u, v: mismos valores con los nombres que usa el resto del programa. */
+  return { ok, u: mx, v: my, ear, w2: ancho2, px: ix / n / W, py: iy / n / H };
 }
 
 function extraerOjos(lm){
   const W = cam.videoWidth || 640, H = cam.videoHeight || 480;
-  return { R: ojoDesde(lm, EYE.R, W, H), L: ojoDesde(lm, EYE.L, W, H) };
+  return { R: ojoDesde(lm, EYE.R, W, H, 'R'), L: ojoDesde(lm, EYE.L, W, H, 'L') };
 }
 
-/* Pose de cabeza desde la matriz 4x4 (column-major). Incluye traslación:
-   al acercarse o correrse de costado, la proyección del iris cambia y estos
-   términos lo compensan. */
+/* Pose de cabeza desde la matriz 4x4 de MediaPipe (column-major:
+   R[fila][col] = d[col*4 + fila]).
+   Marco de la matriz: cámara en el origen, X hacia la derecha de la imagen
+   SIN espejar, Y hacia ARRIBA (al revés que los landmarks) y la cara en z<0
+   (tz ≈ -40…-70). Unidades: cm del modelo canónico, con la cámara virtual
+   de MediaPipe (63° vertical). Si la cámara real tiene otro campo visual, la
+   escala queda multiplicada por un factor constante que absorbe la
+   calibración.
+   El frente de la cara es la columna 2 de R (d[8], d[9], d[10]). */
 function poseDesdeMatriz(m){
   const d = m.data;
+  const R = [d[0], d[4], d[8], d[1], d[5], d[9], d[2], d[6], d[10]]; // fila mayor
   return {
-    yaw: Math.atan2(d[2], d[10]) * 180 / Math.PI,
-    pitch: Math.atan2(-d[6], Math.hypot(d[2], d[10])) * 180 / Math.PI,
+    yaw: Math.atan2(d[8], d[10]) * 180 / Math.PI,
+    pitch: Math.atan2(d[9], Math.hypot(d[8], d[10])) * 180 / Math.PI,
     roll: Math.atan2(d[1], d[0]) * 180 / Math.PI,
-    tx: d[12] || 0, ty: d[13] || 0, tz: d[14] || 0
+    tx: d[12] || 0, ty: d[13] || 0, tz: d[14] || 0,
+    R
   };
 }
+/* Respaldo sin matriz: solo sirve para mostrar/registrar. Sin R no hay rayo
+   de mirada, así que ese cuadro no produce mirada. */
 function poseDesdeNariz(lm){
   const ancho = hypot(lm[234].x - lm[454].x, lm[234].y - lm[454].y) || 0.3;
   const alto = hypot(lm[10].x - lm[152].x, lm[10].y - lm[152].y) || 0.4;
@@ -707,53 +778,106 @@ function poseDesdeNariz(lm){
   return {
     yaw: ((lm[1].x - cx) / ancho) * 90,
     pitch: ((lm[1].y - cy) / alto) * 90,
-    roll: 0, tx: 0, ty: 0, tz: 0
+    roll: 0, tx: 0, ty: 0, tz: 0, R: null
   };
 }
 
-/* ---------- 5.2 Features y modelo ---------- */
-const FEAT_KEYS = ['uR', 'vR', 'uL', 'vL', 'yaw', 'pitch', 'roll', 'tx', 'ty', 'tz'];
+/* ---------- 5.2 Modelo geométrico de la mirada ----------
+   Mirada = rayo que sale de los ojos con dirección
+       frente de la cabeza (R)  ⊕  giro del ojo dentro de la cabeza (u, v)
+   y se corta con el plano de la pantalla (plano z = 0 de la cámara: la
+   webcam está pegada al monitor). El punto de corte, en cm, se lleva a la
+   pantalla con una transformación afín calibrada.
 
-function vectorCrudo(o, h){
+   Así se compensan solos:
+   - girar la cabeza mirando fijo (VOR): R gira y el ojo contra-gira, el
+     rayo sigue apuntando al mismo lugar;
+   - seguir el objetivo con la cabeza: R aporta el giro que el ojo no hace;
+   - acercarse/alejarse o correrse: el origen del rayo (traslación de la
+     matriz) y la distancia |z| entran en la intersección.
+
+   Parámetros calibrados:
+     rx, ry  radio de giro del iris (en anchos de ojo)
+     ox, oy  corrimiento del iris mirando al frente de la cara
+     beta    profundidad del centro del globo detrás de las comisuras
+     ax, ay  afín cm → coordenadas normalizadas de pantalla
+   La fase "mové la cabeza mirando el punto" mide beta y ox/oy (con la
+   mirada fija, lo único que mueve el iris es el giro de la cabeza). El
+   radio y la escala de la afín se confunden con la cabeza quieta; ahí un
+   prior anatómico débil fija el radio. */
+
+/* Ojo respecto del origen de la matriz, en el marco de la cara (cm). Valor
+   aproximado del modelo canónico: un error de 2-3 cm aquí cuesta menos de
+   1 cm en pantalla con giros de 20°. */
+const OJO_OFF = [0, 2.5, 2.5];
+/* Prior anatómico (en anchos de ojo, ojo ≈ 30 mm):
+   RHO0  radio de giro del iris ≈ 11-12 mm  → 0,38
+   BETA0 centro del globo detrás de la línea de comisuras ≈ 6 mm → 0,2 */
+const RHO0 = 0.38, BETA0 = 0.2;
+const KALMAN_SA = 1500;      // px/s² de aceleración admitida (persecución)
+
+/* Muestra de un cuadro: todo lo que el modelo necesita, sin interpretar. */
+function muestraGeo(ojos, head){
+  if(!head || !head.R) return null;
+  const okR = !!ojos.R.ok, okL = !!ojos.L.ok;
+  if(!okR && !okL) return null;
   return {
-    uR: o.R.u, vR: o.R.v, uL: o.L.u, vL: o.L.v,
-    yaw: (h.yaw || 0) / 30, pitch: (h.pitch || 0) / 30, roll: (h.roll || 0) / 30,
-    tx: (h.tx || 0) / 10, ty: (h.ty || 0) / 10, tz: (h.tz || 0) / 10
+    okR, okL,
+    uR: ojos.R.u, vR: ojos.R.v, uL: ojos.L.u, vL: ojos.L.v,
+    wR: ojos.R.w2 || 1, wL: ojos.L.w2 || 1,
+    R: head.R, t: [head.tx, head.ty, head.tz],
+    yaw: head.yaw, pitch: head.pitch
   };
 }
-/* Features optimizados para seguimiento con OJOS: iris + polinomios ligeros.
-   Si "solo ojos" está activo, se atenúa mucho la contribución de la cabeza
-   al permitir al CV elegir lambda mayor y recortando ese rango. */
-function vectorPara(v, modo){
-  const ojosSolo = !!(eyesOnlyChk && eyesOnlyChk.checked);
-  if(modo === 'R'){
-    const u = v.uR, wv = v.vR;
-    if(ojosSolo) return [u, wv, u*u, wv*wv, u*wv, 1];
-    return [u, wv, u*u, wv*wv, u*wv, v.yaw*0.25, v.pitch*0.25, v.tx*0.1, v.ty*0.1, 1];
+
+/* Desplazamiento del iris combinando los dos ojos (pesados por su ancho en
+   la imagen: el ojo más lejano se ve angosto y mide peor). Con un solo ojo
+   se usa ese ojo menos su diferencia típica con el promedio. */
+function ojoEnCabeza(s, off){
+  if(s.okR && s.okL){
+    const w = s.wR + s.wL;
+    return { uH: (s.uR * s.wR + s.uL * s.wL) / w, vH: (s.vR * s.wR + s.vL * s.wL) / w };
   }
-  if(modo === 'L'){
-    const u = v.uL, wv = v.vL;
-    if(ojosSolo) return [u, wv, u*u, wv*wv, u*wv, 1];
-    return [u, wv, u*u, wv*wv, u*wv, v.yaw*0.25, v.pitch*0.25, v.tx*0.1, v.ty*0.1, 1];
-  }
-  /* ambos ojos */
-  const uR = v.uR, vR = v.vR, uL = v.uL, vL = v.vL;
-  const um = (uR - uL) * 0.5;
-  const vm = (vR + vL) * 0.5;
-  if(ojosSolo) return [uR, vR, uL, vL, um, vm, uR*uR, vR*vR, uL*uL, vL*vL, uR*vR, uL*vL, 1];
-  return [uR, vR, uL, vL, um, vm, uR*uR, vR*vR, uL*uL, vL*vL, uR*vR, uL*vL,
-          v.yaw*0.25, v.pitch*0.25, v.roll*0.15, v.tx*0.08, v.ty*0.08, 1];
+  if(!off) return null;
+  if(s.okL) return { uH: s.uL - off.uL, vH: s.vL - off.vL };
+  if(s.okR) return { uH: s.uR - off.uR, vH: s.vR - off.vR };
+  return null;
+}
+
+/* Modelo del globo ocular (marco de cámara, en anchos de ojo):
+     iris − medio_comisuras = ρ·mirada + R·(ox, oy, −β)
+   ρ: radio de giro; β: cuánto está el centro del globo detrás de las
+   comisuras; (ox, oy): corrimiento del iris mirando al frente de la cara.
+   Mirando la parte x,y (lo único que mide bien MediaPipe) se despeja
+   la mirada EXACTA en el marco de la cámara, ya con el giro de cabeza:
+     mirada_xy = (m − [R·(ox, oy, −β)]_xy) / ρ
+   Luego el rayo sale de los ojos y se corta con el plano de la pantalla. */
+function miradaCamara(s, e, k){
+  const R = s.R;
+  const cx = R[0] * k.ox + R[1] * k.oy - R[2] * k.beta;
+  const cy = R[3] * k.ox + R[4] * k.oy - R[5] * k.beta;
+  let gx = (e.uH - cx) / k.rx, gy = (e.vH - cy) / k.ry;
+  const n = Math.hypot(gx, gy);
+  if(n > 0.95){ gx *= 0.95 / n; gy *= 0.95 / n; }
+  return { x: gx, y: gy, z: Math.sqrt(1 - gx * gx - gy * gy) };
+}
+
+/* Intersección del rayo de mirada con el plano z = 0 (cm). */
+function puntoPlano(s, e, k){
+  const R = s.R;
+  const g = miradaCamara(s, e, k);
+  const zs = R[8] >= 0 ? 1 : -1;
+  const ex = OJO_OFF[0], ey = OJO_OFF[1], ez = OJO_OFF[2] * zs;
+  const ox = s.t[0] + R[0] * ex + R[1] * ey + R[2] * ez;
+  const oy = s.t[1] + R[3] * ex + R[4] * ey + R[5] * ez;
+  const oz = s.t[2] + R[6] * ex + R[7] * ey + R[8] * ez;
+  const dist = Math.abs(oz) || 50;
+  const gz = Math.max(g.z, 0.25);
+  return { x: ox + dist * g.x / gz, y: oy + dist * g.y / gz };
 }
 
 function dot(a, b){ let s = 0; for(let i = 0; i < a.length; i++) s += a[i] * b[i]; return s; }
 function media(a){ let s = 0; for(const v of a) s += v; return s / (a.length || 1); }
-function desvio(a){
-  if(a.length < 2) return 0;
-  const m = media(a);
-  let s = 0;
-  for(const v of a) s += (v - m) * (v - m);
-  return Math.sqrt(s / (a.length - 1));
-}
 function mediana(a){
   if(!a.length) return 0;
   const s = [...a].sort((x, y) => x - y);
@@ -761,7 +885,7 @@ function mediana(a){
   return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
 }
 
-/* Mínimos cuadrados por eliminación gaussiana (matriz chica, 11x11). */
+/* Sistema lineal chico por eliminación gaussiana con pivoteo. */
 function resolverLineal(A, b){
   const n = A.length;
   const M = A.map((row, i) => [...row, b[i]]);
@@ -780,176 +904,249 @@ function resolverLineal(A, b){
   return M.map(row => row[n]);
 }
 
-/* Ridge con estandarización: cada feature queda en media 0 / desvío 1, así
-   la penalización trata a todas por igual y yaw/pitch dejan de dominar.
-   Además se guarda el rango visto en calibración: en juego los valores se
-   recortan a ese rango (con margen), para que una pose nueva no extrapole el
-   modelo lineal a cualquier lado. */
-function ajustarRidge(X, y, lam){
-  const n = X[0].length;
-  const mu = new Array(n), sd = new Array(n), lo = new Array(n), hi = new Array(n);
-  for(let j = 0; j < n; j++){
-    const col = X.map(r => r[j]);
-    mu[j] = media(col);
-    sd[j] = Math.max(desvio(col), 1e-3);
-    const mn = Math.min(...col), mx = Math.max(...col);
-    const pad = Math.max((mx - mn) * 0.6, 1e-3);
-    lo[j] = mn - pad;
-    hi[j] = mx + pad;
-  }
-  const AtA = Array.from({ length: n + 1 }, () => new Array(n + 1).fill(0));
-  const Atb = new Array(n + 1).fill(0);
-  for(let i = 0; i < X.length; i++){
-    const z = X[i].map((v, j) => (v - mu[j]) / sd[j]);
-    z.push(1);
-    for(let r = 0; r <= n; r++){
-      Atb[r] += z[r] * y[i];
-      for(let c = 0; c <= n; c++) AtA[r][c] += z[r] * z[c];
+/* Afín ponderada: objetivo ≈ a0 + a1·x + a2·y. */
+function ajustarAfin(P, T, W){
+  const A = [[0, 0, 0], [0, 0, 0], [0, 0, 0]], b = [0, 0, 0];
+  for(let i = 0; i < P.length; i++){
+    const z = [1, P[i].x, P[i].y], w = W[i];
+    for(let r = 0; r < 3; r++){
+      b[r] += w * z[r] * T[i];
+      for(let c = 0; c < 3; c++) A[r][c] += w * z[r] * z[c];
     }
   }
-  const ojosSolo = !!(eyesOnlyChk && eyesOnlyChk.checked);
-  for(let j = 0; j < n; j++){
-    const extra = (ojosSolo && j >= 5) ? 0.5 : 0; // atenuar cabeza si solo ojos
-    AtA[j][j] += lam * (1 + extra);
+  for(let r = 1; r < 3; r++) A[r][r] += 1e-6;
+  return resolverLineal(A, b);
+}
+const aplicarAfin = (a, p) => a[0] + a[1] * p.x + a[2] * p.y;
+
+/* Pérdida del modelo para unos parámetros [rx, ry, ox, oy, beta]: la afín
+   se resuelve exacta adentro, así el optimizador busca solo 5 números. */
+function evaluarGeo(par, filas){
+  const k = { rx: par[0], ry: par[1], ox: par[2], oy: par[3], beta: par[4] };
+  const P = filas.map(f => puntoPlano(f.s, f.e, k));
+  const W = filas.map(f => f.w);
+  const ax = ajustarAfin(P, filas.map(f => f.nx), W);
+  const ay = ajustarAfin(P, filas.map(f => f.ny), W);
+  let L = 0, sw = 0;
+  for(let i = 0; i < filas.length; i++){
+    const rx = aplicarAfin(ax, P[i]) - filas[i].nx;
+    const ry = aplicarAfin(ay, P[i]) - filas[i].ny;
+    L += W[i] * (rx * rx + ry * ry);
+    sw += W[i];
   }
-  // el sesgo no se penaliza
-  return { w: resolverLineal(AtA, Atb), mu, sd, lo, hi, n };
+  /* Priors anatómicos débiles: fijan lo que los datos no alcanzan a fijar
+     (con la cabeza quieta, ρ y la escala de la afín se confunden). */
+  const lx = Math.log(Math.max(k.rx, 0.03) / RHO0);
+  const ly = Math.log(Math.max(k.ry, 0.03) / RHO0);
+  const lb = (k.beta - BETA0) / 0.15;
+  L = L / (sw || 1) + 0.002 * (lx * lx + ly * ly) + 0.001 * lb * lb +
+      (k.rx <= 0.03 || k.ry <= 0.03 ? 10 : 0);
+  return { L, k, ax, ay, P };
 }
 
-function predecirFila(mod, x){
-  let s = mod.w[mod.n];
-  for(let j = 0; j < x.length; j++){
-    const z = (clamp(x[j], mod.lo[j], mod.hi[j]) - mod.mu[j]) / mod.sd[j];
-    s += z * mod.w[j];
-  }
-  return s;
-}
-
-function predecirModelo(m, v, eje){
-  return predecirFila(m[eje], vectorPara(v, m.modo));
-}
-
-/* Error de validación cruzada para un lambda dado (en coords normalizadas). */
-function evaluarCV(X, tx, ty, folds, lam){
-  let ex = 0, ey = 0, total = 0;
-  for(let f = 0; f < folds; f++){
-    const tr = [], te = [];
-    for(let i = 0; i < X.length; i++) (i % folds === f ? te : tr).push(i);
-    if(tr.length < 4 || !te.length) continue;
-    const Xtr = tr.map(i => X[i]);
-    const mx = ajustarRidge(Xtr, tr.map(i => tx[i]), lam);
-    const my = ajustarRidge(Xtr, tr.map(i => ty[i]), lam);
-    for(const i of te){
-      const px = predecirFila(mx, X[i]);
-      const py = predecirFila(my, X[i]);
-      ex += (px - tx[i]) ** 2;
-      ey += (py - ty[i]) ** 2;
-      total++;
+/* Nelder-Mead mínimo (4 parámetros, pocas iteraciones). */
+function nelderMead(f, x0, paso, iter = 400){
+  const n = x0.length;
+  let S = [x0.slice()];
+  for(let i = 0; i < n; i++){ const x = x0.slice(); x[i] += paso[i]; S.push(x); }
+  let F = S.map(f);
+  for(let it = 0; it < iter; it++){
+    const ord = F.map((v, i) => i).sort((a, b) => F[a] - F[b]);
+    S = ord.map(i => S[i]); F = ord.map(i => F[i]);
+    if(Math.abs(F[n] - F[0]) < 1e-10) break;
+    const c = new Array(n).fill(0);
+    for(let i = 0; i < n; i++) for(let j = 0; j < n; j++) c[j] += S[i][j] / n;
+    const lin = t => c.map((v, j) => v + t * (S[n][j] - v));
+    const xr = lin(-1), fr = f(xr);
+    if(fr < F[0]){
+      const xe = lin(-2), fe = f(xe);
+      if(fe < fr){ S[n] = xe; F[n] = fe; } else { S[n] = xr; F[n] = fr; }
+    }else if(fr < F[n - 1]){
+      S[n] = xr; F[n] = fr;
+    }else{
+      const xc = lin(0.5), fc = f(xc);
+      if(fc < F[n]){ S[n] = xc; F[n] = fc; }
+      else{
+        for(let i = 1; i <= n; i++){
+          S[i] = S[i].map((v, j) => S[0][j] + 0.5 * (v - S[0][j]));
+          F[i] = f(S[i]);
+        }
+      }
     }
   }
-  return total ? { ex: Math.sqrt(ex / total), ey: Math.sqrt(ey / total) } : null;
+  const b = F.indexOf(Math.min(...F));
+  return { x: S[b], f: F[b] };
 }
 
-const LAMBDAS = [0.01, 0.03, 0.1, 0.3, 1, 3, 10, 30, 100];
-
-/* Entrena 3 modelos: los dos ojos juntos, solo derecho y solo izquierdo.
-   En juego se combinan según qué ojos estén disponibles. */
-function entrenarModelo(puntos, modo){
-  const filas = puntos.filter(p =>
-    modo === 'both' ? (p.o.R.ok && p.o.L.ok) :
-    modo === 'R'    ? p.o.R.ok : p.o.L.ok);
-  if(filas.length < 6) return null;
-
-  const X = filas.map(p => vectorPara(vectorCrudo(p.o, p.head), modo));
-  const tx = filas.map(p => p.nx);
-  const ty = filas.map(p => p.ny);
-  const folds = Math.min(8, Math.max(3, Math.floor(filas.length / 4)));
-
-  let mejor = null;
-  for(const lam of LAMBDAS){
-    const e = evaluarCV(X, tx, ty, folds, lam);
-    if(!e) continue;
-    const score = e.ex + e.ey;
-    if(!mejor || score < mejor.score) mejor = { lam, e, score };
-  }
-  if(!mejor) return null;
-
-  const mx = ajustarRidge(X, tx, mejor.lam);
-  const my = ajustarRidge(X, ty, mejor.lam);
-  const errPx = Math.hypot(mejor.e.ex * state.w * ESC_X, mejor.e.ey * state.h * ESC_Y);
-  return { modo, mx, my, lam: mejor.lam, errPx, n: filas.length, cvEx: mejor.e.ex, cvEy: mejor.e.ey };
+/* Diferencia típica de cada ojo con el promedio (para cuando falta uno). */
+function offsetsOjos(muestras){
+  const amb = muestras.filter(s => s.okR && s.okL);
+  if(!amb.length) return { uL: 0, vL: 0, uR: 0, vR: 0 };
+  const e = amb.map(s => ojoEnCabeza(s, null));
+  return {
+    uL: mediana(amb.map((s, i) => s.uL - e[i].uH)),
+    vL: mediana(amb.map((s, i) => s.vL - e[i].vH)),
+    uR: mediana(amb.map((s, i) => s.uR - e[i].uH)),
+    vR: mediana(amb.map((s, i) => s.vR - e[i].vH))
+  };
 }
 
-function predecirCrudo(o, h){
-  const M = state.calib.models;
-  if(!M) return null;
-  const v = vectorCrudo(o, h);
-  const cand = [];
-  if(o.R.ok && o.L.ok && M.both) cand.push(M.both);
-  if(o.R.ok && M.R) cand.push(M.R);
-  if(o.L.ok && M.L) cand.push(M.L);
-  if(!cand.length) return null;
-
-  /* Ponderación por error CV + consistencia entre ojos. */
-  let sx = 0, sy = 0, sw = 0;
-  for(const m of cand){
-    const w = 1 / ((m.errPx * m.errPx) + 80);
-    sx += predecirModelo(m, v, 'mx') * w;
-    sy += predecirModelo(m, v, 'my') * w;
-    sw += w;
-  }
-  let nx = sx / sw, ny = sy / sw;
-
-  /* Si ambos ojos disponibles y hay modelos por ojo, corregir sesgo por
-     inconsistencia (ayuda cuando un ojo tiene peor pista). */
-  if(o.R.ok && o.L.ok && M.R && M.L){
-    const prR = {x: predecirModelo(M.R, v, 'mx'), y: predecirModelo(M.R, v, 'my')};
-    const prL = {x: predecirModelo(M.L, v, 'mx'), y: predecirModelo(M.L, v, 'my')};
-    const dx = prR.x - prL.x, dy = prR.y - prL.y;
-    const d = Math.hypot(dx, dy);
-    if(d < 0.25){
-      nx = nx * 0.6 + ((prR.x + prL.x) / 2) * 0.4;
-      ny = ny * 0.6 + ((prR.y + prL.y) / 2) * 0.4;
+/* Entrena el modelo geométrico.
+   grilla:  [{ nx, ny, muestras: [s…] }]  cabeza quieta, un grupo por punto
+   cabeza:  { nx, ny, muestras: [s…] }    mirando fijo y moviendo la cabeza */
+function entrenarGeo(grilla, cabeza){
+  const todas = grilla.flatMap(g => g.muestras).concat(cabeza ? cabeza.muestras : []);
+  const off = offsetsOjos(todas);
+  let filas = [];
+  grilla.forEach((g, pid) => {
+    const w = 1 / g.muestras.length;
+    for(const s of g.muestras){
+      const e = ojoEnCabeza(s, off);
+      if(e) filas.push({ s, e, nx: g.nx, ny: g.ny, w, pid });
+    }
+  });
+  const nGrilla = grilla.length;
+  if(cabeza && cabeza.muestras.length >= 20){
+    /* La fase de cabeza pesa como medio punto de grilla por cada 2 puntos:
+       suficiente para fijar la ganancia del ojo sin dominar el resto. */
+    const w = (0.5 * nGrilla) / cabeza.muestras.length;
+    for(const s of cabeza.muestras){
+      const e = ojoEnCabeza(s, off);
+      if(e) filas.push({ s, e, nx: cabeza.nx, ny: cabeza.ny, w, pid: -1 });
     }
   }
-  return { nx, ny, n: cand.length };
+  if(nGrilla < 5 || filas.length < 30) return null;
+
+  const optimizar = (fs, inicios) => {
+    let mejor = null;
+    for(const x0 of inicios){
+      const r = nelderMead(p => evaluarGeo(p, fs).L, x0, [0.1, 0.1, 0.03, 0.03, 0.1], 600);
+      if(!mejor || r.f < mejor.f) mejor = r;
+    }
+    return mejor;
+  };
+  let mejor = optimizar(filas, [
+    [RHO0, RHO0, 0, 0, BETA0], [RHO0, RHO0, 0, 0, 0.05], [RHO0 * 0.6, RHO0 * 0.6, 0, 0, BETA0]
+  ]);
+
+  /* Descarte de muestras atípicas (mirada que se escapó, parpadeo parcial)
+     y reajuste desde la mejor solución. */
+  const ev0 = evaluarGeo(mejor.x, filas);
+  const res = filas.map((f, i) => Math.hypot(aplicarAfin(ev0.ax, ev0.P[i]) - f.nx,
+                                             aplicarAfin(ev0.ay, ev0.P[i]) - f.ny));
+  const lim = Math.max(mediana(res) * 3.5, 0.08);
+  const limpias = filas.filter((f, i) => res[i] <= lim);
+  if(limpias.length >= 30 && limpias.length < filas.length){
+    filas = limpias;
+    mejor = optimizar(filas, [mejor.x]);
+  }
+  const fin = evaluarGeo(mejor.x, filas);
+
+  /* Error por validación "dejar un punto afuera" (afín reajustada sin ese
+     punto) y temblor típico dentro de cada punto, en px. */
+  const E = state.calEsc || esc(), pxX = E.x, pxY = E.y;
+  const errs = [], temblor = [];
+  for(let pid = 0; pid < nGrilla; pid++){
+    const dentro = [], fuera = [];
+    filas.forEach((f, i) => (f.pid === pid ? dentro : fuera).push(i));
+    if(!dentro.length) continue;
+    const Pf = fuera.map(i => fin.P[i]), Wf = fuera.map(i => filas[i].w);
+    const ax = ajustarAfin(Pf, fuera.map(i => filas[i].nx), Wf);
+    const ay = ajustarAfin(Pf, fuera.map(i => filas[i].ny), Wf);
+    const px = dentro.map(i => aplicarAfin(ax, fin.P[i]));
+    const py = dentro.map(i => aplicarAfin(ay, fin.P[i]));
+    const g = grilla[pid];
+    errs.push(Math.hypot((mediana(px) - g.nx) * pxX, (mediana(py) - g.ny) * pxY));
+    const mx = media(px), my = media(py);
+    temblor.push(Math.sqrt(media(px.map((v, j) => ((v - mx) * pxX) ** 2 + ((py[j] - my) * pxY) ** 2))));
+  }
+  const errPx = Math.sqrt(media(errs.map(e => e * e)));
+  const sigmaPx = clamp(mediana(temblor) / Math.SQRT2, 8, 120);
+
+  /* Cuánto se movió la cabeza en la fase dedicada (para el informe). */
+  let rangoYaw = 0, rangoPitch = 0;
+  if(cabeza && cabeza.muestras.length){
+    const ys = cabeza.muestras.map(s => s.yaw).sort((a, b) => a - b);
+    const ps = cabeza.muestras.map(s => s.pitch).sort((a, b) => a - b);
+    const q = (a, p) => a[Math.floor((a.length - 1) * p)];
+    rangoYaw = q(ys, 0.95) - q(ys, 0.05);
+    rangoPitch = q(ps, 0.95) - q(ps, 0.05);
+  }
+  return { k: fin.k, ax: fin.ax, ay: fin.ay, off, errPx, sigmaPx,
+           n: filas.length, rangoYaw, rangoPitch };
 }
 
-/* Filtro One Euro: más estable para mirada fija, responde bien a sacadas. */
-class OneEuro{
-  constructor(minCutoff = 0.8, beta = 0.006, dCutoff = 1.0){
-    this.minCutoff = minCutoff; this.beta = beta; this.dCutoff = dCutoff;
-    this.xPrev = null; this.dxPrev = 0; this.tPrev = null;
-  }
-  static alpha(cutoff, dt){ const tau = 1 / (2 * Math.PI * cutoff); return 1 / (1 + tau / dt); }
-  filter(x, tMs){
-    if(this.tPrev === null){ this.tPrev = tMs; this.xPrev = x; return x; }
-    const dt = Math.max((tMs - this.tPrev) / 1000, 1e-3);
-    const dx = (x - this.xPrev) / dt;
-    const aD = OneEuro.alpha(this.dCutoff, dt);
-    const dxHat = aD * dx + (1 - aD) * this.dxPrev;
-    const a = OneEuro.alpha(this.minCutoff + this.beta * Math.abs(dxHat), dt);
-    const xHat = a * x + (1 - a) * this.xPrev;
-    this.xPrev = xHat; this.dxPrev = dxHat; this.tPrev = tMs;
-    return xHat;
-  }
-  reset(){ this.xPrev = null; this.dxPrev = 0; this.tPrev = null; }
+function predecirGeo(s){
+  const G = state.calib.geo;
+  if(!G || !s) return null;
+  const e = ojoEnCabeza(s, G.off);
+  if(!e) return null;
+  const P = puntoPlano(s, e, G.k);
+  const nx = aplicarAfin(G.ax, P), ny = aplicarAfin(G.ay, P);
+  if(!isFinite(nx) || !isFinite(ny)) return null;
+  return { nx, ny, n: (s.okR ? 1 : 0) + (s.okL ? 1 : 0) };
 }
-const fX = new OneEuro(0.7, 0.005), fY = new OneEuro(0.7, 0.005);
+
+/* Filtro de Kalman de velocidad constante, uno por eje, en px.
+   - Quieto: promedia el ruido (temblor bajo).
+   - Persecución: estima la velocidad, así que no se queda atrás del
+     objetivo como un pasabajos (el One Euro anterior iba ~230 ms tarde).
+   - Sacada: si la medición cae lejos 2 cuadros seguidos, salta ahí. */
+class KalmanCV{
+  constructor(){ this.reset(); }
+  reset(){ this.x = null; }
+  update(z, tMs, sz, sa){
+    const r = sz * sz;
+    if(this.x === null){
+      this.x = z; this.v = 0; this.p00 = r; this.p01 = 0; this.p11 = 400 * 400;
+      this.t = tMs; this.fuera = 0;
+      return z;
+    }
+    const dt = clamp((tMs - this.t) / 1000, 1e-3, 0.25);
+    this.t = tMs;
+    this.x += this.v * dt;
+    const q = sa * sa, dt2 = dt * dt;
+    const p00 = this.p00 + 2 * dt * this.p01 + dt2 * this.p11 + q * dt2 * dt2 / 4;
+    const p01 = this.p01 + dt * this.p11 + q * dt2 * dt / 2;
+    const p11 = this.p11 + q * dt2;
+    const S = p00 + r, inn = z - this.x;
+    if(inn * inn > 16 * S){
+      if(++this.fuera >= 2){
+        this.x = z; this.v = 0; this.p00 = r; this.p01 = 0; this.p11 = 400 * 400; this.fuera = 0;
+        return z;
+      }
+      this.p00 = p00; this.p01 = p01; this.p11 = p11;
+      return this.x;
+    }
+    this.fuera = 0;
+    const k0 = p00 / S, k1 = p01 / S;
+    this.x += k0 * inn;
+    this.v += k1 * inn;
+    this.p00 = (1 - k0) * p00;
+    this.p01 = (1 - k0) * p01;
+    this.p11 = p11 - k1 * p01;
+    return this.x;
+  }
+}
+const fX = new KalmanCV(), fY = new KalmanCV();
 
 /* ---------- 5.3 Un cuadro de cámara ---------- */
-function procesarMirada(ojos, head, now){
-  if(!state.calib.done || !state.calib.models) return;
+function procesarMirada(s, now){
+  if(!state.calib.done || !state.calib.geo) return;
   if(state.calibrating || state.recentering) return;
 
-  const pr = predecirCrudo(ojos, head);
-  if(!pr){ state.gazeValid = false; return; }
+  const pr = predecirGeo(s);
+  if(!pr){ state.gazeValid = false; state.diag.nulos++; return; }
+  state.diag.crudo = { nx: pr.nx, ny: pr.ny };
+  state.diag.validos++;
 
-  const nx = clamp(pr.nx + state.calib.bias.x, -1.4, 1.4);
-  const ny = clamp(pr.ny + state.calib.bias.y, -1.4, 1.4);
-  const sx = fX.filter(nx, now);
-  const sy = fY.filter(ny, now);
-  state.gazeScreen = proyectar(sx, sy);
+  const nx = clamp(pr.nx + state.calib.bias.x, -1.6, 1.6);
+  const ny = clamp(pr.ny + state.calib.bias.y, -1.6, 1.6);
+  const p = proyectar(nx, ny);
+  const sig = state.calib.sigmaPx || 35;
+  /* Si la medición se cortó un rato, arrancar el filtro de cero. */
+  if(now - state.lastGaze > GAZE_FRESCA_MS){ fX.reset(); fY.reset(); }
+  state.gazeScreen = { x: fX.update(p.x, now, sig, KALMAN_SA), y: fY.update(p.y, now, sig, KALMAN_SA) };
   state.gazeValid = true;
   state.gazeConf = pr.n;
   state.lastGaze = now;
@@ -980,7 +1177,9 @@ function detectar(now){
   state.eye = ojos;
   state.head = head;
   state.raw = { ojos, head };
-  procesarMirada(ojos, head, now);
+  state.geo = muestraGeo(ojos, head);
+  state.frameId++;
+  procesarMirada(state.geo, now);
 }
 
 function dibujarCamara(lm){
@@ -1018,14 +1217,9 @@ function puntosCalibracion(){
     (Math.abs(a.nx) + Math.abs(a.ny)) - (Math.abs(b.nx) + Math.abs(b.ny)));
 }
 
-/* Junta cuadros durante `ms` PERO solo guarda muestras con ambas pupilas
-   visibles y ojos suficientemente abiertos. El anillo de progreso refleja
-   muestras válidas reunidas: sin pupilas, no se llena. */
-const CAL_MIN_MUESTRAS = 18;   // ~0,6 s de cámara a 30 fps
-const CAL_MOVMAX = 0.035;      // umbral de fijación (suma de |Δu|+|Δv| por ojo)
-const CAL_GAP_MS = 600;        // sin muestras válidas este tiempo = bloqueo
-
-/* Junta muestras de un punto de calibración con dos veredictos:
+/* Junta muestras de un punto de calibración, UNA por cuadro de cámara
+   analizado (antes se leía con un temporizador y el mismo cuadro podía
+   entrar dos veces). Dos veredictos:
    - muestras: SOLO cuadros con ambas pupilas visibles, ojos abiertos y
      ojo QUIETO (fijación). Si el usuario mira hacia otro lado, el anillo
      no avanza: el relleno solo ocurre mirando la diana.
@@ -1033,44 +1227,84 @@ const CAL_GAP_MS = 600;        // sin muestras válidas este tiempo = bloqueo
      capturar nada (ojos cerrados, tapados, fuera de cámara). En ese caso
      la calibración se corta y se reinicia cuando el escaneo vuelva a estar
      completo. */
+const CAL_MIN_MUESTRAS = 20;   // ~0,7 s de cámara a 30 fps
+const CAL_FIX_TOL = 0.035;     // fijación: distancia del iris a su mediana reciente
+const CAL_GAP_MS = 700;        // sin ojos visibles este tiempo = punto fallido
+
 function capturarPunto(ms){
   return new Promise(resolve => {
     const out = [];
     const t0 = performance.now();
-    let prev = null;          // u,v del cuadro anterior (para medir fijación)
+    const ventana = [];       // últimos cuadros (para medir fijación)
     let lastValid = t0;
+    let ultimoCuadro = state.frameId;
     const iv = setInterval(() => {
       const now = performance.now();
-      const ojos = state.eye && (now - state.lastFace) < 350 ? state.eye : null;
-
-      if(ojos && ojos.R.ok && ojos.L.ok && ojos.R.ear >= 0.18 && ojos.L.ear >= 0.18){
-        /* Fijación: comparar con el cuadro anterior. Una sacada o un ojo
-           moviéndose (mirando otra cosa) supera el umbral y no cuenta. */
-        const mov = prev
-          ? Math.abs(ojos.R.u - prev.uR) + Math.abs(ojos.R.v - prev.vR) +
-            Math.abs(ojos.L.u - prev.uL) + Math.abs(ojos.L.v - prev.vL)
-          : 99;
-        if(mov < CAL_MOVMAX){
-          out.push({
-            o: { R: { ...ojos.R }, L: { ...ojos.L } },
-            head: { ...state.head }
-          });
-          lastValid = now;
+      if(state.frameId !== ultimoCuadro){
+        ultimoCuadro = state.frameId;
+        const s = state.geo;
+        if(s && s.okR && s.okL){
+          lastValid = now;    // los ojos se ven: no hay corte
+          /* Fijación: el iris tiene que estar cerca de su mediana de los
+             últimos cuadros. Una sacada (mirar a otro lado) lo saca de ahí.
+             Si cuesta juntar muestras, la tolerancia se afloja de a poco
+             para no trabar la calibración con una cámara ruidosa. */
+          const e = ojoEnCabeza(s, null);
+          ventana.push(e);
+          if(ventana.length > 6) ventana.shift();
+          const mu = mediana(ventana.map(v => v.uH)), mv = mediana(ventana.map(v => v.vH));
+          const tol = CAL_FIX_TOL * (1 + Math.max(0, (now - t0 - 600) / 600));
+          if(ventana.length >= 3 && Math.hypot(e.uH - mu, e.vH - mv) < tol) out.push(s);
+        }else{
+          ventana.length = 0;
         }
-        prev = { uR: ojos.R.u, vR: ojos.R.v, uL: ojos.L.u, vL: ojos.L.v };
-      }else{
-        prev = null;
       }
 
-      /* Anillo = muestras válidas reunidas. Sin pupilas o sin fijar la
-         mirada, el anillo se congela. */
+      /* Anillo = muestras válidas reunidas. */
       state.calProg = clamp(out.length / CAL_MIN_MUESTRAS, 0, 1);
       const interrumpido = (now - lastValid) > CAL_GAP_MS;
       if(out.length >= CAL_MIN_MUESTRAS || now - t0 >= ms || interrumpido){
         clearInterval(iv);
         resolve({ muestras: out, interrumpido });
       }
-    }, 33);
+    }, 8);
+  });
+}
+
+/* Fase de cabeza: la persona mira fijo el punto y mueve la cabeza despacio
+   (izquierda-derecha y arriba-abajo). Como la mirada no cambia, todo lo que
+   se mueve el iris es contra-giro del ojo: eso mide la ganancia del ojo y
+   permite que el seguimiento funcione con la cabeza quieta o en movimiento.
+   Acá NO se exige fijación del iris respecto de la cara (justamente se
+   mueve); las miradas que se escapen las descarta el ajuste. */
+const CAB_YAW_OBJ = 12, CAB_PITCH_OBJ = 6;   // rango de giro buscado (°)
+function capturarCabeza(ms){
+  return new Promise(resolve => {
+    const out = [];
+    const t0 = performance.now();
+    let ultimoCuadro = state.frameId;
+    let yMin = Infinity, yMax = -Infinity, pMin = Infinity, pMax = -Infinity;
+    const iv = setInterval(() => {
+      const now = performance.now();
+      if(state.frameId !== ultimoCuadro){
+        ultimoCuadro = state.frameId;
+        const s = state.geo;
+        if(s && s.okR && s.okL && now - t0 > 400){
+          out.push(s);
+          yMin = Math.min(yMin, s.yaw); yMax = Math.max(yMax, s.yaw);
+          pMin = Math.min(pMin, s.pitch); pMax = Math.max(pMax, s.pitch);
+        }
+      }
+      const cy = out.length ? clamp((yMax - yMin) / CAB_YAW_OBJ, 0, 1) : 0;
+      const cp = out.length ? clamp((pMax - pMin) / CAB_PITCH_OBJ, 0, 1) : 0;
+      const cobertura = 0.6 * cy + 0.4 * cp;
+      state.calProg = cobertura;
+      const listo = cobertura >= 1 && out.length >= 45;
+      if(listo || now - t0 >= ms){
+        clearInterval(iv);
+        resolve({ muestras: out, cobertura });
+      }
+    }, 8);
   });
 }
 
@@ -1083,31 +1317,6 @@ function medianaRobusta(arr){
   const lim = Math.max(mad * 3, 0.01);
   const filt = arr.filter(x => Math.abs(x - med) <= lim);
   return mediana(filt.length ? filt : arr);
-}
-
-function medianaMuestras(muestras){
-  if(!muestras.length) return null;
-  const h = {};
-  for(const k of ['yaw', 'pitch', 'roll', 'tx', 'ty', 'tz'])
-    h[k] = medianaRobusta(muestras.map(s => s.head[k] || 0));
-
-  const o = {
-    R: { ok: false, u: 0, v: 0, ear: 0 },
-    L: { ok: false, u: 0, v: 0, ear: 0 }
-  };
-  for(const e of ['R', 'L']){
-    const ss = muestras.filter(s => s.o[e].ok);
-    if(ss.length >= 5){
-      o[e] = {
-        ok: true,
-        u: medianaRobusta(ss.map(s => s.o[e].u)),
-        v: medianaRobusta(ss.map(s => s.o[e].v)),
-        ear: medianaRobusta(ss.map(s => s.o[e].ear))
-      };
-    }
-  }
-  if(!o.R.ok && !o.L.ok) return null;
-  return { o, head: h };
 }
 
 function liberarBotonesCalib(habilitar){
@@ -1139,11 +1348,12 @@ async function calibrar(){
   fX.reset(); fY.reset();
 
   const pts = puntosCalibracion();
-  const capturados = [];
+  state.calEsc = escalaCal();
 
   const abortado = () => sesion !== state.calSesion || !state.running;
   const abortar = () => {
     state.calibrating = false;
+    state.calCabeza = false;
     state.calTarget = null;
     state.calProg = 0;
     calibHint.style.display = 'none';
@@ -1166,7 +1376,11 @@ async function calibrar(){
   await sleep(350);
   if(abortado()){ abortar(); return; }
 
-  /* Introducción al protocolo: el anillo solo avanza mirando la diana. */
+  /* Grilla de puntos con la cabeza quieta: el anillo solo avanza mirando
+     la diana. Se guardan TODAS las muestras de cada punto (no solo la
+     mediana): el ajuste geométrico usa la pose de cada cuadro. */
+  const grilla = [];
+  let saltados = 0;
   for(let i = 0; i < pts.length; i++){
     if(abortado()){ abortar(); return; }
     const p = pts[i];
@@ -1174,83 +1388,100 @@ async function calibrar(){
     state.calProg = 0;
 
     /* Robusto: hasta 2 intentos por punto (ganas de parpadear, micro-movidas). */
-    let captura = null, med = null;
-    for(let intento = 0; intento < 2 && !med; intento++){
+    /* Hasta 2 intentos por punto. Si igual no se logra (ojos tapados,
+       punto muy al borde para la cámara), ese punto se SALTEA y se sigue:
+       el modelo tiene pocos parámetros y se ajusta con los demás. */
+    let muestras = [];
+    for(let intento = 0; intento < 2 && muestras.length < 8; intento++){
       if(abortado()){ abortar(); return; }
       calibHint.style.display = 'block';
       calibHint.textContent = intento === 0
         ? `Punto ${i + 1}/${pts.length} — miralo fijo, el anillo se llena mirando`
-        : `Punto ${i + 1}/${pts.length} — otra vez, quitate de la vista tapa ojos`;
-      await sleep(intento === 0 ? 450 : 250);      // deja terminar la sacada
-      captura = await capturarPunto(1200);
+        : `Punto ${i + 1}/${pts.length} — otra vez: ojos bien abiertos, mirá el centro de la diana`;
+      await sleep(intento === 0 ? 450 : 300);      // deja terminar la sacada
+      const captura = await capturarPunto(1800);
       if(abortado()){ abortar(); return; }
-
-      if(captura.interrumpido){
-        /* Ojos cerrados/tapados/fuera de cámara: cortar TODO y empezar de
-           nuevo cuando el escaneo de pupilas vuelva a estar completo. */
-        abortar();
-        state.pupStreak = 0;
-        statusEl.textContent = 'Escaneo interrumpido. Se reinicia cuando se vean bien las pupilas.';
-        showError('La calibración se cortó (ojos cerrados o tapados, o pupilas fuera de cámara).\n\n' +
-          'Volvé a mirar la cámara con los dos ojos abiertos: cuando el escaneo llegue al 100%, la calibración arranca de nuevo sola desde el primer punto.');
-        return;
-      }
-
-      med = medianaMuestras(captura.muestras);
+      if(captura.muestras.length > muestras.length) muestras = captura.muestras;
     }
-
-    if(med && med.o.R.ok && med.o.L.ok) capturados.push({ ...med, nx: p.nx, ny: p.ny }); // ambos ojos
-    else if(med) capturados.push({ ...med, nx: p.nx, ny: p.ny });
+    if(muestras.length >= 8) grilla.push({ nx: p.nx, ny: p.ny, muestras });
+    else saltados++;
   }
 
-  if(abortado()){ abortar(); return; }
+  /* Fase de cabeza: mirar el centro y mover la cabeza despacio. */
+  let cabeza = null;
+  if(!headCalChk || headCalChk.checked){
+    if(abortado()){ abortar(); return; }
+    state.calTarget = { nx: 0, ny: 0 };
+    state.calProg = 0;
+    state.calCabeza = true;
+    calibHint.style.display = 'block';
+    calibHint.textContent = 'Último paso: mirá FIJO el punto y mové la cabeza despacio ← → y ↑ ↓';
+    await sleep(900);
+    if(abortado()){ state.calCabeza = false; abortar(); return; }
+    const cap = await capturarCabeza(7000);
+    state.calCabeza = false;
+    if(abortado()){ abortar(); return; }
+    cabeza = { nx: 0, ny: 0, muestras: cap.muestras, cobertura: cap.cobertura };
+  }
+
   state.calTarget = null;
   state.calProg = 0;
   calibHint.style.display = 'none';
   state.calibrating = false;
 
-  if(capturados.length < 6){
+  if(grilla.length < 5){
     liberarBotonesCalib(true);
-    showError(`Solo se capturaron ${capturados.length} de ${pts.length} puntos. Mejorá la luz, acercate un poco y repetí la calibración.`);
+    showError(`Solo se capturaron ${grilla.length} de ${pts.length} puntos. Mejorá la luz, acercate un poco y repetí la calibración.`);
     statusEl.textContent = 'Calibración incompleta.';
     return;
   }
 
-  const M = {
-    both: entrenarModelo(capturados, 'both'),
-    R: entrenarModelo(capturados, 'R'),
-    L: entrenarModelo(capturados, 'L')
+  statusEl.textContent = 'Ajustando el modelo…';
+  await sleep(30);   // deja pintar el mensaje antes del cálculo
+  state.calData = {
+    grilla, cabeza, w: state.w, h: state.h,
+    video: [cam.videoWidth, cam.videoHeight], fecha: new Date().toISOString()
   };
-  const modelos = [M.both, M.R, M.L].filter(Boolean);
-
-  if(!modelos.length){
+  const geo = entrenarGeo(grilla, cabeza);
+  if(!geo){
     liberarBotonesCalib(true);
     showError('No se pudo ajustar el modelo. Probá con más luz y los dos ojos bien visibles.');
     statusEl.textContent = 'Error de calibración.';
     return;
   }
 
-  const errPx = Math.min(...modelos.map(m => m.errPx));
   state.calib = {
-    done: true, models: M, errPx,
-    n: capturados.length,
+    done: true, geo, errPx: geo.errPx, sigmaPx: geo.sigmaPx,
+    n: grilla.length,
     bias: { x: 0, y: 0 },
-    lam: (modelos.find(m => m.errPx === errPx) || modelos[0]).lam
+    esc: state.calEsc,
+    tz0: mediana(grilla.flatMap(g => g.muestras.map(s => s.t[2])))
   };
+  mostrarAmplitud();
   fX.reset(); fY.reset();
   state.gazeValid = false;
   liberarBotonesCalib(true);
   btnCenter.disabled = false;
 
-  const ojosSolo = !!(eyesOnlyChk && eyesOnlyChk.checked);
+  const errPx = geo.errPx;
   const q = errPx <= state.tolPx * 0.45 ? 'excelente'
           : errPx <= state.tolPx * 0.8 ? 'aceptable' : 'floja';
+  const conCabeza = cabeza && geo.rangoYaw >= 8;
   statusEl.textContent =
-    `Calibrado con ${capturados.length} puntos · error ≈ ${Math.round(errPx)} px (${q})${ojosSolo ? ' · modo solo-ojos' : ''}. Preparate…`;
+    `Calibrado con ${grilla.length} puntos${saltados ? ` (${saltados} salteados)` : ''} · error ≈ ${Math.round(errPx)} px (${q})` +
+    (conCabeza ? ` · cabeza medida (${Math.round(geo.rangoYaw)}°)` : ' · cabeza con valores típicos') +
+    '. Preparate…';
+  console.log('[ojo] calibración geométrica', {
+    rx: geo.k.rx.toFixed(3), ry: geo.k.ry.toFixed(3), ox: geo.k.ox.toFixed(3), oy: geo.k.oy.toFixed(3), beta: geo.k.beta.toFixed(3),
+    errPx: Math.round(errPx), temblorPx: Math.round(geo.sigmaPx),
+    rangoYaw: geo.rangoYaw.toFixed(1), rangoPitch: geo.rangoPitch.toFixed(1), filas: geo.n
+  });
 
   if(q === 'floja'){
     showError(`La calibración quedó floja (error ≈ ${Math.round(errPx)} px, el área de acierto es ${Math.round(state.tolPx)} px). ` +
-      'Repetila con MEJOR LUZ FRONTAL, cámara a nivel de ojos, cabeza quieta y mirando cada punto hasta que se llene el anillo. Usá modo Ultra preciso (25 puntos).');
+      'Repetila con MEJOR LUZ FRONTAL, cámara a nivel de ojos, cabeza quieta en la grilla y mirando cada punto hasta que se llene el anillo. Si un punto no se logra, se saltea solo.');
+  }else if(cabeza && !conCabeza){
+    showError('En el último paso casi no se movió la cabeza. El seguimiento funciona, pero con la cabeza en movimiento será menos preciso: repetí la calibración moviendo la cabeza despacio mientras mirás el punto.');
   }
   prepararRonda();
 }
@@ -1283,7 +1514,7 @@ async function recentrar(){
   }
   const preds = [];
   for(const s of captura.muestras){
-    const pr = predecirCrudo(s.o, s.head);
+    const pr = predecirGeo(s);
     if(pr) preds.push(pr);
   }
   const perdioPupila = captura.interrumpido;
@@ -1302,13 +1533,15 @@ async function recentrar(){
 
   const bx = medianaRobusta(preds.map(p => p.nx));
   const by = medianaRobusta(preds.map(p => p.ny));
-  /* Suavizar corrección para evitar saltos exagerados */
-  state.calib.bias.x = state.calib.bias.x * 0.3 + (-bx) * 0.7;
-  state.calib.bias.y = state.calib.bias.y * 0.3 + (-by) * 0.7;
+  /* Las predicciones se midieron SIN sesgo, así que el sesgo correcto es
+     directamente el opuesto de lo medido (antes se mezclaba con el sesgo
+     anterior y quedaba un 30 % mal). */
+  state.calib.bias.x = -bx;
+  state.calib.bias.y = -by;
   fX.reset(); fY.reset();
 
-  const dx = Math.round(state.calib.bias.x * state.w * ESC_X);
-  const dy = Math.round(state.calib.bias.y * state.h * ESC_Y);
+  const dx = Math.round(state.calib.bias.x * esc().x);
+  const dy = Math.round(state.calib.bias.y * esc().y);
   statusEl.textContent = `Recentrado (corrección ${dx >= 0 ? '+' : ''}${dx} px, ${dy >= 0 ? '+' : ''}${dy} px).`;
   if(state.phase === 'playing') return;
   prepararRonda();
@@ -1446,8 +1679,9 @@ function limites(){
   return {
     cx: state.w / 2,
     cy: state.h / 2,
-    ax: Math.max(24, state.w / 2 - tol - pad),
-    ay: Math.max(24, state.h / 2 - tol - pad)
+    /* Nunca más allá de la amplitud ocular elegida ni de la zona calibrada. */
+    ax: Math.max(24, Math.min(state.w / 2 - tol - pad, semiAmplitudPx(), esc().x)),
+    ay: Math.max(24, Math.min(state.h / 2 - tol - pad, semiAmplitudPx(), esc().y))
   };
 }
 
@@ -1463,12 +1697,17 @@ function setRecorrido(shape){
 function prepararRonda(){
   state.shape = modeSel.value;
   state.tolPx = +tolRange.value;
-  state.speedFactor = +speedRange.value / 100;
+  state.speedDeg = +speedRange.value;
   state.roundLen = +durSel.value;
   state.roundLeft = state.roundLen || 0;
 
   state.score = 0;
   state.insideMs = 0;
+  state.insideRealMs = 0;
+  state.asistiendo = false;
+  state.gazeView = null;
+  state.gPrev = null;
+  state.gVel = { x: 0, y: 0 };
   state.totalMs = 0;
   state.lostMs = 0;
   state.bestRun = 0;
@@ -1513,7 +1752,7 @@ function actualizarJuego(dt, now){
   }
 
   const b = limites();
-  const vPx = state.speedFactor * Math.min(state.w, state.h);
+  const vPx = velPx();
 
   /* Modo mixto: cada 8 s cambia de figura. */
   if(state.shape === 'mixto'){
@@ -1535,12 +1774,44 @@ function actualizarJuego(dt, now){
 
   const tol = state.tolPx;
   const g = state.gazeScreen;
-  state.dist = hypot(g.x - p.x, g.y - p.y);
+  const distReal = hypot(g.x - p.x, g.y - p.y);
+  state.distReal = distReal;
+
+  /* AYUDA DE SEGUIMIENTO. Esto es una ayuda de entrenamiento, no un examen:
+     la webcam tiene 2-3° de error, así que si la persona está siguiendo el
+     objetivo se la da por encima de él.
+     "Está siguiendo" = la mirada cae dentro del radio de ayuda, o va en la
+     MISMA DIRECCIÓN que el objetivo y no está demasiado lejos (1,8 × radio).
+     Mientras ayuda, la mirada se dibuja centrada en el objetivo y cuenta
+     como acierto. El CSV guarda igual la distancia real. */
+  if(state.gPrev && dt > 0){
+    const a = 1 - Math.exp(-dt / 0.15);
+    state.gVel.x += ((g.x - state.gPrev.x) / dt - state.gVel.x) * a;
+    state.gVel.y += ((g.y - state.gPrev.y) / dt - state.gVel.y) * a;
+  }
+  state.gPrev = { x: g.x, y: g.y };
+  const radio = gradosAPx(+asistRange.value) * (state.asistiendo ? 1.3 : 1);
+  const vt = hypot(p.vx, p.vy), vg = hypot(state.gVel.x, state.gVel.y);
+  const mismaDir = vt > 20 && vg > vt * 0.3 &&
+                   (state.gVel.x * p.vx + state.gVel.y * p.vy) / (vt * vg) > 0.6;
+  state.asistiendo = +asistRange.value > 0 &&
+                     (distReal <= radio || (mismaDir && distReal <= radio * 1.8));
+
+  /* Mirada dibujada: con ayuda se va al objetivo (y lo acompaña); sin
+     ayuda vuelve a la mirada real. Transición de ~80 ms, sin saltos. */
+  if(!state.gazeView) state.gazeView = { x: g.x, y: g.y };
+  const meta = state.asistiendo ? p : g;
+  if(state.asistiendo){ state.gazeView.x += p.vx * dt; state.gazeView.y += p.vy * dt; }
+  const k = 1 - Math.exp(-dt / 0.08);
+  state.gazeView.x += (meta.x - state.gazeView.x) * k;
+  state.gazeView.y += (meta.y - state.gazeView.y) * k;
 
   /* Histéresis: entrar exige estar dentro del área; salir exige pasarse un
      12 % más. Sin esto, un borde tembloroso haría sonar la alarma a cada
      cuadro y el juego sería insoportable. */
-  state.inside = state.inside ? state.dist <= tol * 1.12 : state.dist <= tol;
+  const dentroReal = distReal <= tol * (state.inside ? 1.12 : 1);
+  state.inside = state.asistiendo || dentroReal;
+  state.dist = state.asistiendo ? Math.min(distReal, tol * 0.3) : distReal;
 
   /* Mirada válida = cuadro reciente (tolera parpadeos) y calibración hecha. */
   state.trackValid = state.pointer || (now - state.lastGaze) < GAZE_FRESCA_MS;
@@ -1554,6 +1825,7 @@ function actualizarJuego(dt, now){
     const ds = state.dirStats[state.dirNow >= 0 ? state.dirNow : 0];
     ds.total += dt;
 
+    if(dentroReal) state.insideRealMs += dt;
     if(state.inside){
       state.insideMs += dt;
       ds.in += dt;
@@ -1573,7 +1845,7 @@ function actualizarJuego(dt, now){
   }
 
   /* Rastro de la mirada (400 ms), para ver la forma del seguimiento. */
-  state.trail.push({ x: g.x, y: g.y, t: now });
+  state.trail.push({ x: state.gazeView.x, y: state.gazeView.y, t: now });
   while(state.trail.length && now - state.trail[0].t > 400) state.trail.shift();
 
   /* Subida automática de dificultad. */
@@ -1581,9 +1853,9 @@ function actualizarJuego(dt, now){
     state.rampAcc += dt;
     if(state.rampAcc >= 10){
       state.rampAcc -= 10;
-      state.speedFactor = Math.min(1.10, state.speedFactor + 0.04);
-      speedRange.value = Math.round(state.speedFactor * 100);
-      speedShow.textContent = '×' + state.speedFactor.toFixed(2).replace('.', ',');
+      state.speedDeg = Math.min(40, state.speedDeg + 1);
+      speedRange.value = state.speedDeg;
+      mostrarVelocidad();
     }
   }
 
@@ -1724,6 +1996,18 @@ function dibujarCalibracion(){
       sctx.lineWidth = 4;
       sctx.stroke();
     }
+
+    /* Fase de cabeza: indicación visible junto al punto. */
+    if(state.calCabeza){
+      sctx.fillStyle = 'rgba(233,237,244,.85)';
+      sctx.font = '600 16px -apple-system,system-ui,sans-serif';
+      sctx.textAlign = 'center';
+      sctx.fillText('Mirá el punto y mové la cabeza despacio', x, y + 78);
+      sctx.font = '600 26px -apple-system,system-ui,sans-serif';
+      sctx.fillText('←   →', x, y - 56);
+      sctx.fillText('↑', x - 92, y + 9);
+      sctx.fillText('↓', x + 92, y + 9);
+    }
   }
   sctx.restore();
 }
@@ -1804,7 +2088,8 @@ function dibujarCuenta(){
 
 function dibujarMirada(now){
   if(!state.pointer && (now - state.lastGaze) > GAZE_FRESCA_MS) return;
-  const g = state.gazeScreen, t = state.target, tol = state.tolPx;
+  const g = (state.phase === 'playing' && state.gazeView) || state.gazeScreen;
+  const t = state.target, tol = state.tolPx;
   const fuera = !state.inside;
   const col = fuera ? '#d4655a' : '#3fb6a8';
 
@@ -1939,7 +2224,7 @@ function actualizarHud(now){
     `<div class="chip ${chipCara}">Rostro <b>${cara}</b></div>` +
     `<div class="chip">Dentro <b>${state.totalMs > 0.4 ? fmtPct(pct) : '—'}</b></div>` +
     `<div class="chip">Racha <b>${state.insideRun.toFixed(1)} s</b></div>` +
-    `<div class="chip">Vel. <b>${Math.round(state.speedFactor * Math.min(state.w, state.h))} px/s</b></div>` +
+    `<div class="chip">Vel. <b>${state.speedDeg} °/s</b></div>` +
     `<div class="chip warn">Dir. <b>${state.dirNow >= 0 ? DIRS[state.dirNow].short : '·'}</b></div>` +
     (state.shape === 'mixto' ? `<div class="chip">Forma <b>${state.subShape || '—'}</b></div>` : '') +
     `<div class="chip">${Math.round(state.fps)} fps</div>`;
@@ -1979,10 +2264,12 @@ function mostrarResultados(){
 
   const filas = [
     ['Tiempo dentro del área', fmtPct(pct)],
+    ['Dentro sin ayuda', fmtPct(state.totalMs > 0 ? state.insideRealMs / state.totalMs : 0) +
+      (+asistRange.value > 0 ? ` (ayuda ${asistRange.value}°)` : '')],
     ['Mejor racha dentro', state.bestRun.toFixed(1) + ' s'],
     ['Tiempo medido', state.totalMs.toFixed(0) + ' s de ' + state.elapsed.toFixed(0) + ' s'],
     ['Sin rostro', fmtPct(perdido)],
-    ['Velocidad final', Math.round(state.speedFactor * Math.min(state.w, state.h)) + ' px/s'],
+    ['Velocidad final', `${state.speedDeg} °/s (≈${Math.round(velPx())} px/s)`],
     ['Área de acierto', Math.round(state.tolPx) + ' px'],
     ['Calibración (error)', state.calib.done && !state.pointer
       ? `${state.calib.n} pts · ≈${Math.round(state.calib.errPx)} px` : '—'],
@@ -2042,6 +2329,41 @@ function paso(now){
   }
 
   registrar(now);
+  diagnostico(now);
+}
+
+/* Diagnóstico: una línea por segundo en la consola durante la ronda. */
+function diagnostico(now){
+  if(!state.running || state.pointer || state.phase !== 'playing') return;
+  if(now - state.diag.t < 1000) return;
+  state.diag.t = now;
+  const g = state.gazeScreen, t = state.target || { x: 0, y: 0 }, s = state.geo;
+  const e = s ? ojoEnCabeza(s, state.calib.geo && state.calib.geo.off) : null;
+  const r = n => Math.round(n);
+  console.log('[ojo] diag ' + JSON.stringify({
+    valida: (now - state.lastGaze) < GAZE_FRESCA_MS, okCuadros: state.diag.validos, nulos: state.diag.nulos,
+    sinMatriz: !!(state.head && !state.head.R),
+    crudo: state.diag.crudo && { nx: +state.diag.crudo.nx.toFixed(2), ny: +state.diag.crudo.ny.toFixed(2) },
+    mirada: { x: r(g.x), y: r(g.y) }, objetivo: { x: r(t.x), y: r(t.y) },
+    dist: r(state.distReal), tol: state.tolPx, dentro: state.inside, ayuda: state.asistiendo,
+    cabeza: state.head && { yaw: +state.head.yaw.toFixed(1), pitch: +state.head.pitch.toFixed(1),
+      t: [state.head.tx, state.head.ty, state.head.tz].map(v => +v.toFixed(1)) },
+    ojo: e && { uH: +e.uH.toFixed(3), vH: +e.vH.toFixed(3) },
+    pantalla: [r(state.w), r(state.h)], distCm: r(distanciaCm()),
+    objGrados: +pxAGrados(Math.hypot(t.x - state.w / 2, t.y - state.h / 2)).toFixed(1)
+  }));
+  state.diag.validos = 0; state.diag.nulos = 0;
+}
+
+/* Descarga las muestras de la última calibración (para analizarlas aparte). */
+function descargarCalib(){
+  if(!state.calData) return console.warn('[ojo] todavía no hay calibración');
+  const blob = new Blob([JSON.stringify(state.calData)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'calibracion-ojo.json';
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 }
 
 /* ---------- 13. Registro y CSV ---------- */
@@ -2058,13 +2380,18 @@ function registrar(now){
     dir: state.dirNow >= 0 ? DIRS[state.dirNow].lbl : '',
     objetivo_x: Math.round(t.x), objetivo_y: Math.round(t.y),
     mirada_x: Math.round(g.x), mirada_y: Math.round(g.y),
-    dist_px: Math.round(state.dist),
+    dist_px: Math.round(state.distReal),
+    asistido: state.asistiendo ? 1 : 0,
+    objetivo_grados: pxAGrados(Math.hypot(t.x - state.w / 2, t.y - state.h / 2)).toFixed(1),
+    error_grados: pxAGrados(state.distReal).toFixed(2),
+    distancia_cm: Math.round(distanciaCm()),
     area_px: Math.round(state.tolPx),
     dentro: state.inside ? 1 : 0,
     rostro: state.trackValid ? 1 : 0,
     calibrado: state.calib.done ? 1 : 0,
     puntaje: Math.round(state.score),
-    vel_px_s: Math.round(state.speedFactor * Math.min(state.w, state.h)),
+    vel_grados_s: state.speedDeg,
+    vel_px_s: Math.round(velPx()),
     yaw: state.head.yaw.toFixed(1),
     pitch: state.head.pitch.toFixed(1),
     fps: Math.round(state.fps)
@@ -2101,7 +2428,7 @@ async function iniciar(){
 
     if(state.pointer){
       state.ready = true;
-      state.calib = { done: true, models: null, errPx: 0, n: 0, bias: { x: 0, y: 0 } };
+      state.calib = { done: true, geo: null, errPx: 0, n: 0, sigmaPx: 35, bias: { x: 0, y: 0 } };
     }else{
       if(!state.stream) state.stream = await iniciarCamara();
       if(!state.lm){
@@ -2155,7 +2482,8 @@ function detener(){
   state.phase = 'idle';
   state.paused = false;
   state.ready = false;
-  state.calib = { done: false, models: null, errPx: 0, n: 0, bias: { x: 0, y: 0 } };
+  state.calib = { done: false, geo: null, errPx: 0, n: 0, sigmaPx: 35, bias: { x: 0, y: 0 } };
+  state.calEsc = null;
   state.calTarget = null;
   state.calProg = 0;
   state.calibrating = false;
@@ -2208,13 +2536,38 @@ btnAgain.addEventListener('click', () => { if(!state.ready) return; prepararRond
 btnRecal.addEventListener('click', () => { results.classList.remove('show'); calibrar(); });
 
 speedRange.addEventListener('input', () => {
-  state.speedFactor = +speedRange.value / 100;
-  speedShow.textContent = '×' + state.speedFactor.toFixed(2).replace('.', ',');
+  state.speedDeg = +speedRange.value;
+  mostrarVelocidad();
 });
+function mostrarVelocidad(){
+  speedShow.textContent = `${state.speedDeg} °/s (≈${Math.round(velPx())} px/s)`;
+}
 tolRange.addEventListener('input', () => {
   state.tolPx = +tolRange.value;
-  tolShow.textContent = state.tolPx + ' px';
+  mostrarAmplitud();
 });
+/* Amplitud en grados + equivalencias en px, y área de acierto en grados. */
+function mostrarAyuda(){
+  const a = +asistRange.value;
+  asistShow.textContent = a > 0 ? `${String(a).replace('.', ',')}° (≈${Math.round(gradosAPx(a))} px)` : 'sin ayuda';
+}
+function mostrarAmplitud(){
+  const a = +ampRange.value, semi = semiAmplitudPx();
+  const recortada = state.calib.done && state.calib.esc && semi > state.calib.esc.x * 1.02;
+  ampShow.textContent = `${a}° (±${a / 2}°) ≈ ±${Math.round(semi)} px` + (recortada ? ' · recalibrá' : '');
+  tolShow.textContent = `${+tolRange.value} px (≈${pxAGrados(+tolRange.value).toFixed(1).replace('.', ',')}°)`;
+}
+for(const el of [ampRange, distIn, diagIn, asistRange]){
+  el.addEventListener('input', () => {
+    try{ localStorage.setItem('ojo.' + el.id, el.value); }catch(e){}
+    mostrarAmplitud();
+    mostrarVelocidad();
+    mostrarAyuda();
+  });
+}
+for(const el of [ampRange, distIn, diagIn, asistRange]){
+  try{ const v = localStorage.getItem('ojo.' + el.id); if(v) el.value = v; }catch(e){}
+}
 volRange.addEventListener('input', () => {
   volShow.textContent = volRange.value + ' %';
   audio.setVolume(+volRange.value / 100);
@@ -2263,8 +2616,10 @@ window.addEventListener('keydown', e => {
 });
 
 /* ---------- 16. Arranque ---------- */
-speedShow.textContent = '×' + (speedRange.value / 100).toFixed(2).replace('.', ',');
-tolShow.textContent = tolRange.value + ' px';
+state.speedDeg = +speedRange.value;
+mostrarVelocidad();
+mostrarAyuda();
+mostrarAmplitud();
 volShow.textContent = volRange.value + ' %';
 
 ajustarLienzo();
@@ -2279,13 +2634,13 @@ requestAnimationFrame(frame);
 window.juego = {
   state, filas, csv, descargarCsv, audio, Path, paso,
   version: '2.3',
-  calibrar, recentrar, puntosCalibracion,
+  calibrar, recentrar, puntosCalibracion, descargarCalib,
   /* Para pruebas sin cámara: permite alimentar landmarks sintéticos y
      verificar la geometría y la regresión por separado. */
   _test: {
-    extraerOjos, ojoDesde, poseDesdeMatriz, vectorCrudo, vectorPara,
-    entrenarModelo, predecirCrudo, predecirModelo, proyectar, procesarMirada,
-    ajustarRidge, evaluarCV, mediana, medianaMuestras, medianaRobusta, EYE, ESC_X, ESC_Y
+    extraerOjos, ojoDesde, poseDesdeMatriz, muestraGeo, ojoEnCabeza, puntoPlano,
+    entrenarGeo, predecirGeo, KalmanCV, proyectar, procesarMirada,
+    mediana, medianaRobusta, EYE, ESC_X, ESC_Y
   },
   nota: 'state.gazeScreen, state.target y state.dirStats tienen todo lo que se mide.'
 };
